@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
-from export import get_statistics, get_series_list, export_all_to_epub, export_series_to_epub
+from export import get_statistics, get_series_list, export_all_to_epub, export_series_to_epub, export_selected_chapters_to_epub
 from settings import get_settings, reload_settings
 from exceptions import DatabaseError
 from logging_config import setup_logging as setup_app_logging, get_log_path
@@ -175,6 +175,36 @@ def export_series(series_name):
             return jsonify({'success': False, 'error': 'No chapters found for series'}), 404
     except Exception as e:
         logger.error(f"Export series {series_name} failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/export/series/<series_name>/chapters', methods=['POST'])
+def export_series_chapters(series_name):
+    """Export selected chapters from a series to EPUB."""
+    try:
+        data = request.json or {}
+        chapter_urls = data.get('chapter_urls', [])
+        
+        if chapter_urls:
+            file_path = export_selected_chapters_to_epub(
+                series_name,
+                chapter_urls,
+                get_settings().CHAPTERS_DB,
+                get_settings().EXPORT_DIR
+            )
+        else:
+            file_path = export_series_to_epub(
+                series_name,
+                get_settings().CHAPTERS_DB,
+                get_settings().EXPORT_DIR
+            )
+        
+        if file_path:
+            return jsonify({'success': True, 'file': _relative_export_path(file_path)})
+        else:
+            return jsonify({'success': False, 'error': 'No chapters found for series'}), 404
+    except Exception as e:
+        logger.error(f"Export series chapters failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

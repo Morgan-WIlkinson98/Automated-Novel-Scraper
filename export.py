@@ -215,6 +215,45 @@ def export_series_to_epub(series_name: str, db_path: Optional[str] = None, outpu
         raise DatabaseError(f"Failed to retrieve chapters: {e}") from e
 
 
+def export_selected_chapters_to_epub(series_name: str, chapter_urls: List[str], db_path: Optional[str] = None, output_dir: Optional[str] = None) -> str:
+    """Export a selected subset of chapters from a series to EPUB."""
+    if not chapter_urls:
+        raise ValidationError("No chapters selected for export")
+    
+    if db_path is None:
+        db_path = _get_db_path()
+    if output_dir is None:
+        output_dir = _get_export_dir()
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        
+        # Build placeholders for the IN clause
+        placeholders = ','.join('?' for _ in chapter_urls)
+        cursor = conn.execute(f"""
+            SELECT series, chapter_label, title, text, extraction_method, fetched_at
+            FROM chapters
+            WHERE series = ? AND url IN ({placeholders})
+            ORDER BY fetched_at
+        """, (series_name, *chapter_urls))
+        
+        chapters = [dict(row) for row in cursor]
+        conn.close()
+        
+        if not chapters:
+            logger.warning(f"No chapters found for series: {series_name} with selected URLs")
+            return None
+        
+        # Use a distinct filename when exporting a subset
+        safe_name = "".join(c for c in series_name if c.isalnum() or c in (' ', '-', '_')).strip() or "Unknown"
+        export_label = f"{safe_name} (selected)"
+        return create_epub(export_label, chapters, output_dir)
+    except sqlite3.Error as e:
+        logger.error(f"Failed to retrieve selected chapters for series '{series_name}': {e}")
+        raise DatabaseError(f"Failed to retrieve selected chapters: {e}") from e
+
+
 def get_series_list(db_path: Optional[str] = None) -> List[str]:
     """Get list of all series in the database."""
     if db_path is None:
