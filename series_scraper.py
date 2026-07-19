@@ -7,6 +7,7 @@ Uses Playwright to bypass Cloudflare, and BeautifulSoup to parse the HTML.
 import logging
 import json
 import re
+import time
 from typing import List, Optional, Dict
 from urllib.parse import urljoin, urlparse
 from exceptions import HTTPError
@@ -118,35 +119,55 @@ def _extract_synopsis(html: str) -> str:
 
 def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 50) -> Dict:
     """Scrape a NovelUpdates series page for synopsis and all paginated chapters."""
-    from browser import get_page_html
+    from browser import get_browser_page
     
     base_url = series_url.rstrip('/') + '/'
     logger.info(f"Scraping series page: {base_url}")
     
-    # First page: synopsis and first batch of chapters
-    html = get_page_html(base_url, timeout=timeout)
-    synopsis = _extract_synopsis(html)
-    chapters = _parse_chapter_list(html, base_url)
-    seen_urls = {c['extnu_url'] for c in chapters}
+    synopsis = ''
+    chapters = []
+    seen_urls = set()
     
-    # Follow paginated chapter tables (?pg=2#myTable, etc.) until no new chapters
-    for pg in range(2, max_pages + 1):
-        page_url = urljoin(base_url, f'?pg={pg}#myTable')
-        logger.info(f"Scraping page {pg}: {page_url}")
-        try:
-            html = get_page_html(page_url, timeout=timeout)
-        except Exception as e:
-            logger.warning(f"Failed to load page {pg}: {e}")
-            break
+    with get_browser_page(timeout=timeout) as page:
+        # First page: synopsis and first batch of chapters
+        page.goto(base_url, wait_until="domcontentloaded")
+        page.wait_for_timeout(7000)
+        html = page.content()
         
-        page_chapters = _parse_chapter_list(html, base_url)
-        new_chapters = [c for c in page_chapters if c['extnu_url'] not in seen_urls]
-        if not new_chapters:
-            break
+        if 'cloudflare' in html.lower():
+            raise HTTPError(f"Cloudflare challenge blocked {base_url}")
         
-        for c in new_chapters:
-            seen_urls.add(c['extnu_url'])
-            chapters.append(c)
+        synopsis = _extract_synopsis(html)
+        chapters = _parse_chapter_list(html, base_url)
+        seen_urls = {c['extnu_url'] for c in chapters}
+        
+        # Follow paginated chapter tables (?pg=2#myTable, etc.) until no new chapters
+        for pg in range(2, max_pages + 1):
+            page_url = urljoin(base_url, f'?pg={pg}#myTable')
+            logger.info(f"Scraping page {pg}: {page_url}")
+            try:
+                page.goto(page_url, wait_until="domcontentloaded")
+                page.wait_for_timeout(7000)
+            except Exception as e:
+                logger.warning(f"Failed to load page {pg}: {e}")
+                break
+            
+            html = page.content()
+            if 'cloudflare' in html.lower():
+                logger.warning(f"Cloudflare challenge on page {pg}, stopping pagination")
+                break
+            
+            page_chapters = _parse_chapter_list(html, base_url)
+            new_chapters = [c for c in page_chapters if c['extnu_url'] not in seen_urls]
+            if not new_chapters:
+                break
+            
+            for c in new_chapters:
+                seen_urls.add(c['extnu_url'])
+                chapters.append(c)
+            
+            # Small delay to avoid hammering the site
+            time.sleep(1.5)
     
     # Sort ascending by chapter number where available
     chapters.sort(key=lambda c: (c['number'] if c['number'] is not None else float('inf')))
