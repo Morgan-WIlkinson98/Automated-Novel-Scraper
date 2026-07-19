@@ -147,6 +147,13 @@ def series_detail(series_name):
         downloaded_urls = {row['chapter_label']: row['url'] for row in cursor}
         conn.close()
         
+        # Show any currently running downloads for this series
+        active_downloads = [
+            {'job_id': jid, **job}
+            for jid, job in _download_jobs.items()
+            if job.get('series') == series_name and not job.get('completed') and not job.get('error')
+        ]
+        
         return render_template(
             'series_detail.html',
             series_name=series_name,
@@ -156,6 +163,7 @@ def series_detail(series_name):
             series_info=series_info,
             available_chapters=available_chapters,
             downloaded_urls=downloaded_urls,
+            active_downloads=active_downloads,
         )
     except Exception as e:
         logger.error(f"Error viewing series {series_name}: {e}")
@@ -448,6 +456,7 @@ def download_series_chapters(series_name):
         import uuid
         job_id = str(uuid.uuid4())
         _download_jobs[job_id] = {
+            'series': series_name,
             'total': len(selected),
             'done': 0,
             'message': f'Started downloading {len(selected)} chapter(s)',

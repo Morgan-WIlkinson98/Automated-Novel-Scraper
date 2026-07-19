@@ -24,6 +24,24 @@
         <p><strong>Available on NovelUpdates:</strong> {{ available_chapters|length }} chapters</p>
     </div>
     
+    {% if active_downloads %}
+    <div class="card">
+        <h3>Active Downloads</h3>
+        {% for job in active_downloads %}
+        <div id="download-job-{{ job.job_id }}" style="margin-bottom: 12px;">
+            <div style="width:200px;height:20px;background:#eee;border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px;">
+                <div id="download-job-bar-{{ job.job_id }}" style="width:0%;height:100%;background:#27ae60;transition:width 0.3s;"></div>
+            </div>
+            <span id="download-job-text-{{ job.job_id }}">{{ job.message or 'Download in progress...' }} ({{ job.done or 0 }}/{{ job.total or '?' }})</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    <script type="application/json" id="active-downloads-data">
+{{ active_downloads | tojson }}
+    </script>
+    
     <div class="card">
         <h3>Bulk Download from NovelUpdates</h3>
         <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
@@ -65,7 +83,7 @@
                             {% if ch['extnu_url'] in downloaded_urls %}
                             <a href="/chapter/{{ downloaded_urls[ch['extnu_url']]|urlencode }}" class="btn">Read</a>
                             {% else %}
-                            <button onclick="downloadChapter('{{ ch['extnu_url'] }}')" class="btn btn-success">⬇ Download</button>
+                            <button data-extnu="{{ ch['extnu_url'] }}" onclick="downloadChapter(this.dataset.extnu)" class="btn btn-success">⬇ Download</button>
                             {% endif %}
                         </td>
                     </tr>
@@ -343,6 +361,23 @@
         
         async function downloadAll() {
             await exportChapters([]);
+        }
+        
+        // Resume polling for any active downloads when the page reloads
+        const activeDownloadsData = document.getElementById('active-downloads-data');
+        let activeJobs = [];
+        if (activeDownloadsData && activeDownloadsData.textContent) {
+            try {
+                activeJobs = JSON.parse(activeDownloadsData.textContent) || [];
+            } catch (e) { activeJobs = []; }
+        }
+        if (activeJobs && activeJobs.length) {
+            activeJobs.forEach(job => {
+                const el = document.getElementById('download-job-' + job.job_id);
+                if (el) {
+                    pollDownloadStatus(job.job_id, el);
+                }
+            });
         }
     </script>
 {% endblock %}
