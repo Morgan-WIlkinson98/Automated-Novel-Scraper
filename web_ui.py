@@ -483,7 +483,7 @@ def download_series_chapters(series_name):
         selected = []
         if urls:
             selected = [{'extnu_url': url} for url in urls if isinstance(url, str)]
-        elif start is not None or end is not None:
+        else:
             conn = get_db_connection()
             series_info = get_series_info(conn, series_name)
             conn.close()
@@ -492,7 +492,11 @@ def download_series_chapters(series_name):
                 return jsonify({'success': False, 'error': 'Series not synced. Run Sync Series first.'}), 400
             
             chapters = json.loads(series_info['available_chapters'])
-            selected = filter_chapters(chapters, start, end)
+            if start is not None or end is not None:
+                selected = filter_chapters(chapters, start, end)
+            else:
+                # No range supplied: download all available chapters
+                selected = chapters
         
         if not selected:
             return jsonify({'success': False, 'error': 'No chapters selected.'}), 404
