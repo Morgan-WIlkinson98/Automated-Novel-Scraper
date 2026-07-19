@@ -10,6 +10,9 @@ import sqlite3
 import json
 import os
 import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
 from export import get_statistics, get_series_list, export_all_to_epub, export_series_to_epub
@@ -296,9 +299,93 @@ def setup_app():
     get_settings().EXPORT_DIR and Path(get_settings().EXPORT_DIR).mkdir(exist_ok=True)
 
 
+SCRAPER_PID_FILE = Path("scraper_pid.json")
+
+
+def _scraper_is_running() -> bool:
+    """Check if the scraper process is still running."""
+    if not SCRAPER_PID_FILE.exists():
+        return False
+    try:
+        pid = json.loads(SCRAPER_PID_FILE.read_text()).get('pid')
+        if pid is None:
+            return False
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError, ProcessLookupError):
+        return False
+
+
+@app.route('/api/scraper_status')
+def api_scraper_status():
+    """Check whether the scraper is currently running."""
+    try:
+        running = _scraper_is_running()
+        return jsonify({'running': running})
+    except Exception as e:
+        logger.error(f"Error checking scraper status: {e}")
+        return jsonify({'running': False, 'error': str(e)})
+
+
+@app.route('/api/start_scraper', methods=['POST'])
+def api_start_scraper():
+    """Start the scraper (main.py) as a subprocess."""
+    try:
+        if _scraper_is_running():
+            return jsonify({'success': False, 'error': 'Scraper is already running'}), 409
+        
+        python = sys.executable
+        process = subprocess.Popen(
+            [python, 'main.py'],
+            cwd=Path(__file__).parent,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        SCRAPER_PID_FILE.write_text(json.dumps({'pid': process.pid}))
+        logger.info(f"Started scraper (PID: {process.pid})")
+        return jsonify({'success': True, 'pid': process.pid})
+    except Exception as e:
+        logger.error(f"Error starting scraper: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/stop_scraper', methods=['POST'])
+def api_stop_scraper():
+    """Stop the running scraper (main.py)."""
+    try:
+        if not SCRAPER_PID_FILE.exists():
+            return jsonify({'success': False, 'error': 'No scraper PID file found'}), 400
+        
+        pid = json.loads(SCRAPER_PID_FILE.read_text()).get('pid')
+        if not pid:
+            return jsonify({'success': False, 'error': 'Invalid PID file'}), 400
+        
+        try:
+            os.kill(pid, signal.SIGTERM)
+            logger.info(f"Sent SIGTERM to scraper (PID: {pid})")
+            time.sleep(1)
+            try:
+                os.kill(pid, 0)
+                os.kill(pid, signal.SIGKILL)
+                logger.info(f"Sent SIGKILL to scraper (PID: {pid})")
+            except ProcessLookupError:
+                pass
+        except ProcessLookupError:
+            logger.warning(f"Scraper process (PID: {pid}) already gone")
+        
+        if SCRAPER_PID_FILE.exists():
+            SCRAPER_PID_FILE.unlink()
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error stopping scraper: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/stop', methods=['POST'])
 def api_stop():
-    """Stop the scraper and web UI processes."""
+    """Stop the scraper and web UI processes (legacy/global stop)."""
     try:
         pid_file = Path("pids.json")
         if not pid_file.exists():

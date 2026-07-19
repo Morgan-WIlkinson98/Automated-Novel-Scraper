@@ -51,3 +51,4 @@ exports/
 
 # Templates (auto-generated)
 templates/
+scraper_pid.json
