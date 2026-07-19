@@ -19,7 +19,7 @@ from core.exceptions import ExtractionError, QualityError, ValidationError
 def _fetch_rendered_html(url: str) -> Optional[str]:
     """Use Playwright to render JS-heavy pages as a last resort."""
     try:
-        from scraping.browser.browser import get_page_html
+        from scraping.browser import get_page_html
         return get_page_html(url, timeout=60)
     except Exception as e:
         logger.warning(f"Browser-rendered fetch failed for {url}: {e}")

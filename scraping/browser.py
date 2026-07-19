@@ -39,7 +39,7 @@ def resolve_with_browser(url: str, timeout: int = 45) -> str:
     
     logger.info(f"Resolving with browser: {url}")
     
-    from core.settings.settings import get_settings
+    from core.settings import get_settings
     settings = get_settings()
     cookies = settings.NOVELUPDATES_COOKIES if isinstance(settings.NOVELUPDATES_COOKIES, dict) else None
     
@@ -162,7 +162,7 @@ def get_page_html(url: str, timeout: int = 60) -> str:
     
     logger.info(f"Fetching page HTML with browser: {url}")
     
-    from core.settings.settings import get_settings
+    from core.settings import get_settings
     settings = get_settings()
     cookies = settings.NOVELUPDATES_COOKIES if isinstance(settings.NOVELUPDATES_COOKIES, dict) else None
     
@@ -264,7 +264,7 @@ def get_browser_page(timeout: int = 60):
         logger.error("Playwright is not installed. Run: pip install playwright && python -m playwright install chromium")
         raise HTTPError("Playwright not installed") from e
     
-    from core.settings.settings import get_settings
+    from core.settings import get_settings
     settings = get_settings()
     cookies = settings.NOVELUPDATES_COOKIES if isinstance(settings.NOVELUPDATES_COOKIES, dict) else None
     

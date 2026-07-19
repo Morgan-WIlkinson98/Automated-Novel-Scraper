@@ -130,7 +130,7 @@ def _extract_synopsis(html: str) -> str:
 
 def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200) -> Dict:
     """Scrape a NovelUpdates series page for synopsis and all paginated chapters."""
-    from scraping.browser.browser import get_browser_page
+    from scraping.browser import get_browser_page
     
     base_url = series_url.rstrip('/') + '/'
     logger.info(f"Scraping series page: {base_url}")
