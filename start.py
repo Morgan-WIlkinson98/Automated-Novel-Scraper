@@ -42,6 +42,11 @@ def start_process(script_name: str, env: dict = None, **popen_kwargs):
         'bufsize': 1,
     }
     popen_args.update(popen_kwargs)
+    # creationflags is Windows-only; start_new_session is Unix-only
+    if sys.platform != 'win32':
+        popen_args.pop('creationflags', None)
+    else:
+        popen_args.pop('start_new_session', None)
     process = subprocess.Popen(cmd, **popen_args)
     logger.info(f"Started {script_name} (PID: {process.pid})")
     return process
@@ -79,6 +84,7 @@ def main():
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0),
         )
         processes.append(("WEB-UI", web_ui))
         pids["web_ui"] = web_ui.pid
@@ -88,7 +94,12 @@ def main():
         
         # Start scraper
         logger.info("Starting scraper")
-        scraper = start_process("main.py", env, start_new_session=True)
+        scraper = start_process(
+            "main.py",
+            env,
+            start_new_session=True,
+            creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0),
+        )
         processes.append(("SCRAPER", scraper))
         pids["scraper"] = scraper.pid
         
