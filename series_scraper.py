@@ -116,16 +116,40 @@ def _extract_synopsis(html: str) -> str:
     return ''
 
 
-def scrape_series_page(series_url: str, timeout: int = 60) -> Dict:
-    """Scrape a NovelUpdates series page for synopsis and chapters."""
+def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 50) -> Dict:
+    """Scrape a NovelUpdates series page for synopsis and all paginated chapters."""
     from browser import get_page_html
     
-    logger.info(f"Scraping series page: {series_url}")
-    html = get_page_html(series_url, timeout=timeout)
+    base_url = series_url.rstrip('/') + '/'
+    logger.info(f"Scraping series page: {base_url}")
     
+    # First page: synopsis and first batch of chapters
+    html = get_page_html(base_url, timeout=timeout)
     synopsis = _extract_synopsis(html)
-    chapters = _parse_chapter_list(html, series_url)
+    chapters = _parse_chapter_list(html, base_url)
+    seen_urls = {c['extnu_url'] for c in chapters}
     
+    # Follow paginated chapter tables (?pg=2#myTable, etc.) until no new chapters
+    for pg in range(2, max_pages + 1):
+        page_url = urljoin(base_url, f'?pg={pg}#myTable')
+        logger.info(f"Scraping page {pg}: {page_url}")
+        try:
+            html = get_page_html(page_url, timeout=timeout)
+        except Exception as e:
+            logger.warning(f"Failed to load page {pg}: {e}")
+            break
+        
+        page_chapters = _parse_chapter_list(html, base_url)
+        new_chapters = [c for c in page_chapters if c['extnu_url'] not in seen_urls]
+        if not new_chapters:
+            break
+        
+        for c in new_chapters:
+            seen_urls.add(c['extnu_url'])
+            chapters.append(c)
+    
+    # Sort ascending by chapter number where available
+    chapters.sort(key=lambda c: (c['number'] if c['number'] is not None else float('inf')))
     logger.info(f"Found {len(chapters)} chapters on {series_url}")
     return {
         'url': series_url,
