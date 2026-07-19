@@ -503,9 +503,11 @@ def api_test_auth():
 
 
 def setup_app():
-    """Ensure required directories exist."""
+    """Ensure required directories and database tables exist."""
     Path("templates").mkdir(exist_ok=True)
     get_settings().EXPORT_DIR and Path(get_settings().EXPORT_DIR).mkdir(exist_ok=True)
+    from storage import init_storage
+    init_storage(get_settings().CHAPTERS_DB)
 
 
 SCRAPER_PID_FILE = Path("scraper_pid.json")
