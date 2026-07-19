@@ -90,6 +90,17 @@ def _guess_chapter_number(text: str) -> Optional[int]:
     return None
 
 
+def _get_max_page(html: str) -> Optional[int]:
+    """Extract the highest pagination page number from NovelUpdates pagination links."""
+    # e.g. href="./?pg=12#myTable"
+    matches = re.findall(r'[?&]pg=(\d+)(?:#myTable)?"', html)
+    if not matches:
+        matches = re.findall(r'[?&]pg=(\d+)', html)
+    if matches:
+        return max(int(m) for m in matches)
+    return None
+
+
 def _extract_synopsis(html: str) -> str:
     """Try to extract the series synopsis from the page."""
     try:
@@ -141,8 +152,13 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 50) 
         chapters = _parse_chapter_list(html, base_url)
         seen_urls = {c['extnu_url'] for c in chapters}
         
+        # Use the actual highest page number from the pagination links, capped by max_pages
+        parsed_max_page = _get_max_page(html)
+        last_page = min(parsed_max_page, max_pages) if parsed_max_page else max_pages
+        logger.info(f"Detected {last_page} chapter pages for {base_url}")
+        
         # Follow paginated chapter tables (?pg=2#myTable, etc.) until no new chapters
-        for pg in range(2, max_pages + 1):
+        for pg in range(2, last_page + 1):
             page_url = urljoin(base_url, f'?pg={pg}#myTable')
             logger.info(f"Scraping page {pg}: {page_url}")
             try:
