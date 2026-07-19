@@ -4,3 +4,5 @@ trafilatura
 readability-lxml
 beautifulsoup4
 lxml
+ebooklib
+flask
