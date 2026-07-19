@@ -7,8 +7,9 @@ Depends on: flask
 
 import sqlite3
 import logging
+import os
 from pathlib import Path
-from flask import Flask, render_template, jsonify, request, send_file
+from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for
 from export import get_statistics, get_series_list, export_all_to_epub, export_series_to_epub
 from exceptions import DatabaseError
 
@@ -19,6 +20,7 @@ app.secret_key = 'novel-scraper-secret-key-change-in-production'
 
 # Database path
 DB_PATH = "chapters.db"
+CONFIG_PATH = "config.py"
 
 
 def get_db_connection():
@@ -26,6 +28,100 @@ def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def load_config():
+    """Load configuration from config.py file."""
+    config = {
+        'RSS_FEED_URL': 'https://www.novelupdates.com/rss/',
+        'NOVELUPDATES_USERNAME': '',
+        'NOVELUPDATES_PASSWORD': '',
+        'NOVELUPDATES_COOKIES': '',
+        'POLL_INTERVAL_SECONDS': 900,
+        'MIN_DELAY_SECONDS': 5,
+        'MIN_CHARS': 500,
+        'MIN_PARAGRAPHS': 3,
+    }
+    
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                config_content = f.read()
+                # Parse the config file
+                for key in config.keys():
+                    if f'{key} = ' in config_content:
+                        # Extract value
+                        lines = config_content.split('\n')
+                        for line in lines:
+                            if line.strip().startswith(f'{key} = '):
+                                value = line.split('=', 1)[1].strip()
+                                # Remove quotes if present
+                                if value.startswith('"') and value.endswith('"'):
+                                    value = value[1:-1]
+                                elif value.startswith("'") and value.endswith("'"):
+                                    value = value[1:-1]
+                                # Handle None
+                                if value == 'None':
+                                    value = ''
+                                # Handle numbers
+                                elif key in ['POLL_INTERVAL_SECONDS', 'MIN_DELAY_SECONDS', 'MIN_CHARS', 'MIN_PARAGRAPHS']:
+                                    try:
+                                        value = int(value)
+                                    except ValueError:
+                                        pass
+                                config[key] = value
+                                break
+        except Exception as e:
+            logger.error(f"Error loading config: {e}")
+    
+    return config
+
+
+def save_config(config_data):
+    """Save configuration to config.py file."""
+    try:
+        config_content = f'''"""
+Configuration file for the novel scraper.
+Contains credentials and settings.
+"""
+
+# NovelUpdates RSS Feed Configuration
+RSS_FEED_URL = "{config_data.get('RSS_FEED_URL', 'https://www.novelupdates.com/rss/')}"
+
+# NovelUpdates Authentication (if required)
+NOVELUPDATES_USERNAME = {repr(config_data.get('NOVELUPDATES_USERNAME', ''))}
+NOVELUPDATES_PASSWORD = {repr(config_data.get('NOVELUPDATES_PASSWORD', ''))}
+
+# Cookie authentication (if you have session cookies)
+NOVELUPDATES_COOKIES = {repr(config_data.get('NOVELUPDATES_COOKIES', ''))}
+
+# Polling Configuration
+POLL_INTERVAL_SECONDS = {config_data.get('POLL_INTERVAL_SECONDS', 900)}
+
+# Politeness Configuration
+MIN_DELAY_SECONDS = {config_data.get('MIN_DELAY_SECONDS', 5)}
+USER_AGENT = "Mozilla/5.0 (compatible; ChapterFetcher/1.0; +https://example.invalid/bot-info)"
+
+# Quality Thresholds
+MIN_CHARS = {config_data.get('MIN_CHARS', 500)}
+MIN_PARAGRAPHS = {config_data.get('MIN_PARAGRAPHS', 3)}
+
+# Database Paths
+SEEN_ENTRIES_DB = "seen_entries.db"
+CHAPTERS_DB = "chapters.db"
+
+# Export Configuration
+EXPORT_DIR = "exports"
+'''
+        
+        with open(CONFIG_PATH, 'w') as f:
+            f.write(config_content)
+        
+        logger.info("Configuration saved successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving config: {e}")
+        return False
 
 
 @app.route('/')
@@ -178,6 +274,100 @@ def download_file(filename):
         return render_template('error.html', error=str(e)), 500
 
 
+@app.route('/settings')
+def settings_page():
+    """Settings page for configuration."""
+    try:
+        config = load_config()
+        return render_template('settings.html', config=config)
+    except Exception as e:
+        logger.error(f"Error loading settings: {e}")
+        return render_template('error.html', error=str(e)), 500
+
+
+@app.route('/api/config', methods=['GET'])
+def api_get_config():
+    """API endpoint to get current configuration."""
+    try:
+        config = load_config()
+        # Don't send password to frontend
+        safe_config = config.copy()
+        safe_config['NOVELUPDATES_PASSWORD'] = '******' if config.get('NOVELUPDATES_PASSWORD') else ''
+        return jsonify(safe_config)
+    except Exception as e:
+        logger.error(f"Error getting config: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/config', methods=['POST'])
+def api_save_config():
+    """API endpoint to save configuration."""
+    try:
+        config_data = request.json
+        success = save_config(config_data)
+        if success:
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to save configuration'}), 500
+    except Exception as e:
+        logger.error(f"Error saving config: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/test-auth', methods=['POST'])
+def api_test_auth():
+    """Test authentication with current configuration."""
+    try:
+        import feedparser
+        import requests
+        
+        config = load_config()
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (compatible; NovelScraper/1.0)'
+        }
+        
+        cookies = None
+        if config.get('NOVELUPDATES_COOKIES'):
+            try:
+                import ast
+                cookies = ast.literal_eval(config['NOVELUPDATES_COOKIES'])
+            except:
+                pass
+        
+        auth = None
+        if config.get('NOVELUPDATES_USERNAME') and config.get('NOVELUPDATES_PASSWORD'):
+            auth = (config['NOVELUPDATES_USERNAME'], config['NOVELUPDATES_PASSWORD'])
+        
+        response = requests.get(
+            config.get('RSS_FEED_URL', 'https://www.novelupdates.com/rss/'),
+            headers=headers,
+            auth=auth,
+            cookies=cookies,
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        feed = feedparser.parse(response.text)
+        
+        return jsonify({
+            'success': True,
+            'status_code': response.status_code,
+            'feed_title': feed.feed.get('title', 'N/A'),
+            'entry_count': len(feed.entries),
+            'has_auth': bool(auth or cookies)
+        })
+    except requests.HTTPError as e:
+        return jsonify({
+            'success': False,
+            'error': f'HTTP Error: {e}',
+            'status_code': e.response.status_code
+        }), 400
+    except Exception as e:
+        logger.error(f"Error testing auth: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 def create_templates():
     """Create HTML templates for the web UI."""
     templates_dir = Path("templates")
@@ -231,6 +421,7 @@ def create_templates():
             <a href="/" class="{% if request.endpoint == 'index' %}active{% endif %}">Dashboard</a>
             <a href="/series" class="{% if request.endpoint == 'series_list' %}active{% endif %}">Series</a>
             <a href="/export" class="{% if request.endpoint == 'export_page' %}active{% endif %}">Export</a>
+            <a href="/settings" class="{% if request.endpoint == 'settings_page' %}active{% endif %}">Settings</a>
         </div>
     </div>
     <div class="container">
@@ -453,6 +644,125 @@ def create_templates():
     """
     
     (templates_dir / "export.html").write_text(export_template)
+    
+    # Settings template
+    settings_template = """
+{% extends "base.html" %}
+{% block title %}Settings - Novel Scraper{% endblock %}
+{% block content %}
+    <div class="card">
+        <h2>⚙️ Settings</h2>
+        <p>Configure authentication, polling, and quality thresholds.</p>
+    </div>
+    
+    <div class="card">
+        <h3>🔐 Authentication</h3>
+        <form id="authForm" style="margin-top: 20px;">
+            <div style="margin-bottom: 15px;">
+                <label for="rss_url"><strong>RSS Feed URL:</strong></label><br>
+                <input type="text" id="rss_url" name="rss_url" value="{{ config.RSS_FEED_URL }}" style="width: 100%; padding: 8px; margin-top: 5px;" placeholder="https://www.novelupdates.com/rss/">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="username"><strong>NovelUpdates Username:</strong></label><br>
+                <input type="text" id="username" name="username" value="{{ config.NOVELUPDATES_USERNAME }}" style="width: 100%; padding: 8px; margin-top: 5px;" placeholder="your_username">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="password"><strong>NovelUpdates Password:</strong></label><br>
+                <input type="password" id="password" name="password" value="{{ config.NOVELUPDATES_PASSWORD }}" style="width: 100%; padding: 8px; margin-top: 5px;" placeholder="••••••••">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="cookies"><strong>Session Cookies (optional):</strong></label><br>
+                <textarea id="cookies" name="cookies" style="width: 100%; padding: 8px; margin-top: 5px;" rows="3" placeholder='{"session_id": "your_cookie"}'></textarea>
+            </div>
+        </form>
+    </div>
+    
+    <div class="card">
+        <h3>⏱️ Polling & Delays</h3>
+        <form id="settingsForm" style="margin-top: 20px;">
+            <div style="margin-bottom: 15px;">
+                <label for="poll_interval"><strong>Poll Interval (seconds):</strong></label><br>
+                <input type="number" id="poll_interval" name="poll_interval" value="{{ config.POLL_INTERVAL_SECONDS }}" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="min_delay"><strong>Minimum Request Delay (seconds):</strong></label><br>
+                <input type="number" id="min_delay" name="min_delay" value="{{ config.MIN_DELAY_SECONDS }}" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+        </form>
+    </div>
+    
+    <div class="card">
+        <h3>📏 Quality Thresholds</h3>
+        <form id="qualityForm" style="margin-top: 20px;">
+            <div style="margin-bottom: 15px;">
+                <label for="min_chars"><strong>Minimum Characters:</strong></label><br>
+                <input type="number" id="min_chars" name="min_chars" value="{{ config.MIN_CHARS }}" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="min_paragraphs"><strong>Minimum Paragraphs:</strong></label><br>
+                <input type="number" id="min_paragraphs" name="min_paragraphs" value="{{ config.MIN_PARAGRAPHS }}" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+        </form>
+    </div>
+    
+    <div class="card">
+        <button onclick="saveConfig()" class="btn btn-success" style="margin-right: 10px;">💾 Save Settings</button>
+        <button onclick="testAuth()" class="btn">🧪 Test Authentication</button>
+    </div>
+    
+    <div id="status"></div>
+    
+    <script>
+        document.getElementById('cookies').value = {{ config.NOVELUPDATES_COOKIES|tojson }};
+        
+        function getFormData() {
+            return {
+                RSS_FEED_URL: document.getElementById('rss_url').value,
+                NOVELUPDATES_USERNAME: document.getElementById('username').value,
+                NOVELUPDATES_PASSWORD: document.getElementById('password').value,
+                NOVELUPDATES_COOKIES: document.getElementById('cookies').value,
+                POLL_INTERVAL_SECONDS: parseInt(document.getElementById('poll_interval').value),
+                MIN_DELAY_SECONDS: parseInt(document.getElementById('min_delay').value),
+                MIN_CHARS: parseInt(document.getElementById('min_chars').value),
+                MIN_PARAGRAPHS: parseInt(document.getElementById('min_paragraphs').value)
+            };
+        }
+        
+        function saveConfig() {
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(getFormData())
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('status').innerHTML = '<div class="alert alert-success">✅ Settings saved successfully!</div>';
+                } else {
+                    document.getElementById('status').innerHTML = '<div class="alert alert-error">❌ Error: ' + data.error + '</div>';
+                }
+            });
+        }
+        
+        function testAuth() {
+            document.getElementById('status').innerHTML = '<div class="alert alert-success">🧪 Testing authentication, please wait...</div>';
+            fetch('/api/test-auth', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('status').innerHTML = '<div class="alert alert-success">✅ Authentication successful!<br>' +
+                        'Feed title: ' + data.feed_title + '<br>' +
+                        'Entries: ' + data.entry_count + '</div>';
+                } else {
+                    document.getElementById('status').innerHTML = '<div class="alert alert-error">❌ Authentication failed: ' + data.error + '</div>';
+                }
+            });
+        }
+    </script>
+{% endblock %}
+    """
+    
+    (templates_dir / "settings.html").write_text(settings_template)
     
     # Error template
     error_template = """
