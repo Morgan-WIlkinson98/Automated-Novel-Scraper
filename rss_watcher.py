@@ -9,6 +9,8 @@ import sqlite3
 import logging
 import time
 import requests
+from datetime import datetime
+from pathlib import Path
 from exceptions import DatabaseError, RSSFeedError, ValidationError
 
 from settings import get_settings
@@ -98,6 +100,29 @@ def fetch_authenticated_feed(url: str) -> str:
         raise RSSFeedError(f"Failed to fetch RSS feed: {e}") from e
 
 
+def _get_rss_feeds_dir() -> Path:
+    """Directory where raw RSS feed XML snapshots are stored."""
+    settings = get_settings()
+    feed_dir = Path(getattr(settings, 'EXPORT_DIR', 'exports')).parent / "rss_feeds"
+    feed_dir.mkdir(parents=True, exist_ok=True)
+    return feed_dir
+
+
+def save_raw_rss_feed(content: str) -> Path:
+    """Archive the raw RSS feed XML with a timestamp and keep a latest.xml copy."""
+    feed_dir = _get_rss_feeds_dir()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive_path = feed_dir / f"feed_{timestamp}.xml"
+    latest_path = feed_dir / "latest.xml"
+    try:
+        archive_path.write_text(content, encoding="utf-8")
+        latest_path.write_text(content, encoding="utf-8")
+        logger.info(f"Saved raw RSS feed to {archive_path} and {latest_path}")
+    except Exception as e:
+        logger.warning(f"Failed to save raw RSS feed: {e}")
+    return archive_path
+
+
 def poll_once(conn, on_new_entry):
     """Perform a single polling iteration of the RSS feed."""
     try:
@@ -106,6 +131,9 @@ def poll_once(conn, on_new_entry):
         
         # Fetch feed with authentication
         feed_content = fetch_authenticated_feed(config.RSS_FEED_URL)
+        
+        # Store the raw XML for UI inspection
+        save_raw_rss_feed(feed_content)
         
         # Parse the feed content
         feed = feedparser.parse(feed_content)

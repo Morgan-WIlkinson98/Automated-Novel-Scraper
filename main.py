@@ -5,7 +5,9 @@ site_overrides, storage, politeness
 """
 
 import logging
+import json
 import re
+import threading
 from urllib.parse import urlparse
 from settings import get_settings
 from rss_watcher import run_forever
@@ -16,6 +18,7 @@ from storage import init_storage, save_chapter, save_series_info
 from politeness import polite_get
 from exceptions import DatabaseError, HTTPError, ValidationError
 from logging_config import setup_logging
+from series_scraper import scrape_series_page
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,25 @@ def get_db():
     if db is None:
         db = init_storage(get_settings().CHAPTERS_DB)
     return db
+
+
+def _sync_series_info_async(series_name: str, series_url: str):
+    """Background task that scrapes the NovelUpdates series page and stores metadata."""
+    try:
+        logger.info(f"Background sync for {series_name}: {series_url}")
+        data = scrape_series_page(series_url)
+        conn = init_storage(get_settings().CHAPTERS_DB)
+        save_series_info(
+            conn,
+            series=series_name,
+            url=series_url,
+            synopsis=data['synopsis'],
+            available_chapters=json.dumps(data['chapters'])
+        )
+        conn.close()
+        logger.info(f"Synced {len(data['chapters'])} chapters for {series_name}")
+    except Exception as e:
+        logger.error(f"Background sync failed for {series_name}: {e}")
 
 def handle_new_entry(entry):
     """Process a new RSS entry through the complete pipeline."""
@@ -97,10 +119,16 @@ def handle_new_entry(entry):
                 method=result.method,
             )
             
-            # Extract and save series URL from the RSS summary
+            # Extract and save series URL from the RSS summary, then sync in background
             series_url_match = re.search(r'https?://www\.novelupdates\.com/series/[^/\s]+/?', chapter_summary)
             if series_url_match:
-                save_series_info(db, series=series_name, url=series_url_match.group(0))
+                series_url = series_url_match.group(0)
+                save_series_info(db, series=series_name, url=series_url)
+                threading.Thread(
+                    target=_sync_series_info_async,
+                    args=(series_name, series_url),
+                    daemon=True,
+                ).start()
             
             logger.info(f"Saved: {result.title} ({result.method})")
         except DatabaseError as e:

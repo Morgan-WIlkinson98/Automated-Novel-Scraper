@@ -48,6 +48,53 @@ def index():
         return render_template('error.html', error=str(e)), 500
 
 
+@app.route('/rss')
+def rss_feeds_page():
+    """List stored raw RSS feed snapshots."""
+    try:
+        feed_dir = Path(get_settings().EXPORT_DIR).parent / "rss_feeds"
+        feed_dir.mkdir(parents=True, exist_ok=True)
+        files = sorted(feed_dir.glob('feed_*.xml'), key=lambda p: p.stat().st_mtime, reverse=True)
+        latest = feed_dir / "latest.xml"
+        return render_template('rss.html', files=[f.name for f in files], latest=latest.name if latest.exists() else None)
+    except Exception as e:
+        logger.error(f"Error listing RSS feeds: {e}")
+        return render_template('error.html', error=str(e)), 500
+
+
+@app.route('/rss/raw/<filename>')
+def rss_raw(filename):
+    """Return the raw XML for a stored RSS snapshot."""
+    try:
+        feed_dir = Path(get_settings().EXPORT_DIR).parent / "rss_feeds"
+        file_path = feed_dir / filename
+        if not file_path.resolve().is_relative_to(feed_dir.resolve()):
+            return render_template('error.html', error="Invalid path"), 403
+        if not file_path.exists():
+            return render_template('error.html', error="Feed not found"), 404
+        return send_file(file_path, mimetype='application/xml')
+    except Exception as e:
+        logger.error(f"Error serving RSS feed {filename}: {e}")
+        return render_template('error.html', error=str(e)), 500
+
+
+@app.route('/rss/view/<filename>')
+def rss_view(filename):
+    """Display a stored RSS feed snapshot safely in the browser."""
+    try:
+        feed_dir = Path(get_settings().EXPORT_DIR).parent / "rss_feeds"
+        file_path = feed_dir / filename
+        if not file_path.resolve().is_relative_to(feed_dir.resolve()):
+            return render_template('error.html', error="Invalid path"), 403
+        if not file_path.exists():
+            return render_template('error.html', error="Feed not found"), 404
+        content = file_path.read_text(encoding='utf-8')
+        return render_template('rss_view.html', filename=filename, content=content)
+    except Exception as e:
+        logger.error(f"Error viewing RSS feed {filename}: {e}")
+        return render_template('error.html', error=str(e)), 500
+
+
 @app.route('/series')
 def series_list():
     """List all series."""
@@ -78,7 +125,6 @@ def series_detail(series_name):
             method_counts[c['extraction_method']] = method_counts.get(c['extraction_method'], 0) + 1
         
         series_info = get_series_info(conn, series_name)
-        conn.close()
         
         available_chapters = []
         if series_info.get('available_chapters'):
@@ -86,6 +132,14 @@ def series_detail(series_name):
                 available_chapters = json.loads(series_info['available_chapters'])
             except json.JSONDecodeError:
                 pass
+        
+        # Map extnu URLs to the final downloaded chapter URLs for on-demand viewing
+        cursor = conn.execute(
+            "SELECT chapter_label, url FROM chapters WHERE series = ? AND chapter_label LIKE 'https://www.novelupdates.com/extnu/%'",
+            (series_name,)
+        )
+        downloaded_urls = {row['chapter_label']: row['url'] for row in cursor}
+        conn.close()
         
         return render_template(
             'series_detail.html',
@@ -95,6 +149,7 @@ def series_detail(series_name):
             method_counts=method_counts,
             series_info=series_info,
             available_chapters=available_chapters,
+            downloaded_urls=downloaded_urls,
         )
     except Exception as e:
         logger.error(f"Error viewing series {series_name}: {e}")
@@ -300,24 +355,29 @@ def sync_series(series_name):
 
 @app.route('/api/series/<series_name>/download', methods=['POST'])
 def download_series_chapters(series_name):
-    """Download a range of chapters from the NovelUpdates series page."""
+    """Download selected chapters or a chapter range from the NovelUpdates series page."""
     try:
         data = request.json or {}
+        urls = data.get('urls')  # list of specific extnu URLs
         start = data.get('start')
         end = data.get('end')
         
-        conn = get_db_connection()
-        series_info = get_series_info(conn, series_name)
-        conn.close()
-        
-        if not series_info.get('available_chapters'):
-            return jsonify({'success': False, 'error': 'Series not synced. Run Sync Series first.'}), 400
-        
-        chapters = json.loads(series_info['available_chapters'])
-        selected = filter_chapters(chapters, start, end)
+        selected = []
+        if urls:
+            selected = [{'extnu_url': url} for url in urls if isinstance(url, str)]
+        elif start is not None or end is not None:
+            conn = get_db_connection()
+            series_info = get_series_info(conn, series_name)
+            conn.close()
+            
+            if not series_info.get('available_chapters'):
+                return jsonify({'success': False, 'error': 'Series not synced. Run Sync Series first.'}), 400
+            
+            chapters = json.loads(series_info['available_chapters'])
+            selected = filter_chapters(chapters, start, end)
         
         if not selected:
-            return jsonify({'success': False, 'error': f'No chapters found for range {start}-{end}'}), 404
+            return jsonify({'success': False, 'error': 'No chapters selected.'}), 404
         
         # Process in background so the request returns quickly
         import threading
@@ -329,7 +389,7 @@ def download_series_chapters(series_name):
         
         return jsonify({
             'success': True,
-            'message': f'Started downloading {len(selected)} chapters. Check logs for progress.'
+            'message': f'Started downloading {len(selected)} chapter(s). Check logs for progress.'
         })
     except Exception as e:
         logger.error(f"Download series {series_name} failed: {e}")
@@ -374,7 +434,7 @@ def _process_chapter_downloads(series_name: str, chapters: list):
                 db,
                 url=final_url,
                 series=series_name,
-                chapter_label=ch.get('title', ''),
+                chapter_label=extnu_url,
                 title=result.title or f"Chapter {ch.get('number')}",
                 text=result.text,
                 method=result.method,

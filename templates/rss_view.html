@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ filename }} - Novel Scraper{% endblock %}
+{% block content %}
+    <div class="card">
+        <h2>📄 {{ filename }}</h2>
+        <p><a href="/rss/raw/{{ filename }}">Download raw XML</a> | <a href="/rss">Back to list</a></p>
+    </div>
+    <div class="card">
+        <pre style="white-space: pre-wrap; word-wrap: break-word; background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto;">{{ content }}</pre>
+    </div>
+{% endblock %}

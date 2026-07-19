@@ -38,6 +38,45 @@
     </div>
     
     <div class="card">
+        <h3>Available Chapters on NovelUpdates</h3>
+        <div style="margin-bottom: 15px;">
+            <button onclick="toggleSelectAllAvailable()" class="btn" style="margin-right: 10px;">Toggle Select All</button>
+            <button onclick="downloadSelectedAvailable()" class="btn" style="margin-right: 10px;">⬇ Download Selected</button>
+        </div>
+        <div style="max-height: 500px; overflow-y: auto; border: 1px solid #444; border-radius: 5px;">
+            <table style="width: 100%; margin-top: 0;">
+                <thead>
+                    <tr>
+                        <th>Select</th>
+                        <th>#</th>
+                        <th>Title</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ch in available_chapters %}
+                    <tr>
+                        <td><input type="checkbox" class="available-checkbox" value="{{ ch['extnu_url'] }}" style="transform: scale(1.2);"></td>
+                        <td>{{ ch['number'] or '?' }}</td>
+                        <td>{{ ch['title'] }}</td>
+                        <td>{{ 'Downloaded' if ch['extnu_url'] in downloaded_urls else 'Not downloaded' }}</td>
+                        <td>
+                            {% if ch['extnu_url'] in downloaded_urls %}
+                            <a href="/chapter/{{ downloaded_urls[ch['extnu_url']]|urlencode }}" class="btn">Read</a>
+                            {% else %}
+                            <button onclick="downloadChapter('{{ ch['extnu_url'] }}')" class="btn btn-success">⬇ Download</button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div id="available-status" style="margin-top: 15px;"></div>
+    </div>
+    
+    <div class="card">
         <h3>Downloaded Chapters</h3>
         <div style="margin-bottom: 15px;">
             <button onclick="toggleSelectAll()" class="btn" style="margin-right: 10px;">Toggle Select All</button>
@@ -76,10 +115,57 @@
             return Array.from(document.querySelectorAll('.chapter-checkbox:checked')).map(cb => cb.value);
         }
         
+        function getSelectedAvailableUrls() {
+            return Array.from(document.querySelectorAll('.available-checkbox:checked')).map(cb => cb.value);
+        }
+        
         function toggleSelectAll() {
             const checkboxes = document.querySelectorAll('.chapter-checkbox');
             const allChecked = Array.from(checkboxes).every(cb => cb.checked);
             checkboxes.forEach(cb => cb.checked = !allChecked);
+        }
+        
+        function toggleSelectAllAvailable() {
+            const checkboxes = document.querySelectorAll('.available-checkbox');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            checkboxes.forEach(cb => cb.checked = !allChecked);
+        }
+        
+        async function downloadChapter(extnuUrl) {
+            const statusEl = document.getElementById('available-status');
+            statusEl.textContent = 'Starting download...';
+            try {
+                const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ urls: [extnuUrl] })
+                });
+                const data = await response.json();
+                statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e;
+            }
+        }
+        
+        async function downloadSelectedAvailable() {
+            const urls = getSelectedAvailableUrls();
+            if (urls.length === 0) {
+                alert('Please select at least one chapter.');
+                return;
+            }
+            const statusEl = document.getElementById('available-status');
+            statusEl.textContent = 'Starting download...';
+            try {
+                const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ urls })
+                });
+                const data = await response.json();
+                statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e;
+            }
         }
         
         async function setSeriesUrl() {
