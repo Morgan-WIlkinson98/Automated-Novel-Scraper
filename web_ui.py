@@ -855,7 +855,7 @@ def api_stop_scraper():
 
 @app.route('/api/stop', methods=['POST'])
 def api_stop():
-    """Stop the scraper and web UI processes (legacy/global stop)."""
+    """Stop the scraper (main.py) only; keep the web UI running."""
     try:
         pid_file = Path("pids.json")
         if not pid_file.exists():
@@ -864,8 +864,8 @@ def api_stop():
         with open(pid_file) as f:
             pids = json.load(f)
         
-        # Stop child processes first (scraper, then web UI)
-        for key in ['scraper', 'web_ui', 'start']:
+        # Stop only the scraper process (fetching/extracting)
+        for key in ['scraper']:
             pid = pids.get(key)
             if pid and pid != os.getpid():
                 try:
@@ -879,9 +879,9 @@ def api_stop():
         if pid_file.exists():
             pid_file.unlink()
         
-        return jsonify({'success': True, 'message': 'Stop signal sent. The app will shut down shortly.'})
+        return jsonify({'success': True, 'message': 'Scraper stopped. The web UI remains running.'})
     except Exception as e:
-        logger.error(f"Error stopping app: {e}")
+        logger.error(f"Error stopping scraper: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

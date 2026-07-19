@@ -9,6 +9,7 @@ import json
 import logging
 import subprocess
 import time
+import signal
 from pathlib import Path
 from core.logging_config import setup_logging
 
@@ -28,19 +29,20 @@ def clear_pids():
         PID_FILE.unlink()
 
 
-def start_process(script_name: str, env: dict = None):
+def start_process(script_name: str, env: dict = None, **popen_kwargs):
     """Start a Python script as a subprocess."""
     python = sys.executable
     cmd = [python, script_name]
-    process = subprocess.Popen(
-        cmd,
-        cwd=Path(__file__).parent,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
+    popen_args = {
+        'cwd': Path(__file__).parent,
+        'env': env,
+        'stdout': subprocess.PIPE,
+        'stderr': subprocess.STDOUT,
+        'text': True,
+        'bufsize': 1,
+    }
+    popen_args.update(popen_kwargs)
+    process = subprocess.Popen(cmd, **popen_args)
     logger.info(f"Started {script_name} (PID: {process.pid})")
     return process
 
@@ -63,10 +65,21 @@ def main():
     processes = []
     pids = {"start": os.getpid()}
     
+    def _on_sigterm(signum, frame):
+        logger.info(f"Received signal {signum}, stopping scraper and exiting...")
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, _on_sigterm)
+    
     try:
         # Start web UI first
         logger.info("Starting web UI on http://localhost:6110")
-        web_ui = start_process("web_ui.py", env)
+        web_ui = start_process(
+            "web_ui.py",
+            env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
         processes.append(("WEB-UI", web_ui))
         pids["web_ui"] = web_ui.pid
         
@@ -75,7 +88,7 @@ def main():
         
         # Start scraper
         logger.info("Starting scraper")
-        scraper = start_process("main.py", env)
+        scraper = start_process("main.py", env, start_new_session=True)
         processes.append(("SCRAPER", scraper))
         pids["scraper"] = scraper.pid
         
@@ -87,6 +100,8 @@ def main():
         import threading
         threads = []
         for prefix, process in processes:
+            if process.stdout is None:
+                continue
             t = threading.Thread(target=log_output, args=(process, prefix), daemon=True)
             t.start()
             threads.append(t)
@@ -99,7 +114,7 @@ def main():
         logger.info("Stopping services...")
     finally:
         for name, process in processes:
-            if process.poll() is None:
+            if name == "SCRAPER" and process.poll() is None:
                 logger.info(f"Terminating {name}")
                 process.terminate()
                 try:
@@ -108,7 +123,7 @@ def main():
                     process.kill()
                     process.wait()
         clear_pids()
-        logger.info("All services stopped")
+        logger.info("Scraper stopped; web UI left running")
 
 
 if __name__ == "__main__":

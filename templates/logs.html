@@ -91,13 +91,13 @@
         }
         
         async function stopApp() {
-            if (!confirm('Stop the scraper and web UI?')) return;
+            if (!confirm('Stop the scraper?')) return;
             try {
-                const response = await fetch('/api/stop', { method: 'POST' });
+                const response = await fetch('/api/stop_scraper', { method: 'POST' });
                 const data = await response.json();
                 if (data.success) {
-                    document.getElementById('log-content').textContent = 'Application stopped.';
-                    alert('Application stopped.');
+                    document.getElementById('log-content').textContent = 'Scraper stopped. The web UI remains running.';
+                    alert('Scraper stopped.');
                 } else {
                     alert('Failed to stop: ' + (data.error || 'Unknown error'));
                 }
