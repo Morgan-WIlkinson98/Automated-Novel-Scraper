@@ -571,6 +571,19 @@ def _process_chapter_downloads(series_name: str, chapters: list, job_id: str):
         extnu_url = ch.get('extnu_url')
         if not extnu_url:
             continue
+        
+        # Skip chapters that are already downloaded for this series
+        existing = db.execute(
+            "SELECT url FROM chapters WHERE series = ? AND chapter_label = ?",
+            (series_name, extnu_url)
+        ).fetchone()
+        if existing:
+            _download_jobs[job_id]['done'] = idx
+            _download_jobs[job_id]['chapter_urls'][extnu_url] = existing[0]
+            _download_jobs[job_id]['message'] = f'Skipping {ch.get("number") or idx} (already exists) ({idx}/{len(chapters)})'
+            logger.info(f"Skipping already downloaded chapter {ch.get('number')} for {series_name}")
+            continue
+        
         try:
             final_url = resolve_final_url(extnu_url)
             result = extract_chapter(final_url)
