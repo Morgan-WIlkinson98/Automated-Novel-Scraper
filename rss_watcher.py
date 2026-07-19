@@ -1,19 +1,33 @@
 """
 rss_watcher.py
-Depends on: feedparser
-    pip install feedparser
+Depends on: feedparser, requests
+    pip install feedparser requests
 """
 
 import feedparser
 import sqlite3
 import logging
 import time
+import requests
 from exceptions import DatabaseError, RSSFeedError, ValidationError
 
 logger = logging.getLogger(__name__)
 
-FEED_URL = "https://www.novelupdates.com/rss/"
-POLL_INTERVAL_SECONDS = 15 * 60
+# Try to import config, use defaults if not available
+try:
+    from config import (
+        RSS_FEED_URL,
+        POLL_INTERVAL_SECONDS,
+        NOVELUPDATES_USERNAME,
+        NOVELUPDATES_PASSWORD,
+        NOVELUPDATES_COOKIES,
+    )
+except ImportError:
+    RSS_FEED_URL = "https://www.novelupdates.com/rss/"
+    POLL_INTERVAL_SECONDS = 15 * 60
+    NOVELUPDATES_USERNAME = None
+    NOVELUPDATES_PASSWORD = None
+    NOVELUPDATES_COOKIES = None
 
 
 def init_db(path="seen_entries.db"):
@@ -65,11 +79,44 @@ def mark_seen(conn, guid: str, link: str):
         raise DatabaseError(f"Failed to mark entry: {e}") from e
 
 
+def fetch_authenticated_feed(url: str) -> str:
+    """Fetch RSS feed with authentication if credentials are provided."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (compatible; NovelScraper/1.0)'
+        }
+        
+        # Use cookies if provided
+        cookies = NOVELUPDATES_COOKIES if NOVELUPDATES_COOKIES else None
+        
+        # Use basic auth if username/password provided
+        auth = None
+        if NOVELUPDATES_USERNAME and NOVELUPDATES_PASSWORD:
+            auth = (NOVELUPDATES_USERNAME, NOVELUPDATES_PASSWORD)
+            logger.info("Using username/password authentication for RSS feed")
+        elif cookies:
+            logger.info("Using cookie authentication for RSS feed")
+        else:
+            logger.info("Fetching RSS feed without authentication")
+        
+        response = requests.get(url, headers=headers, auth=auth, cookies=cookies, timeout=30)
+        response.raise_for_status()
+        return response.text
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch RSS feed: {e}")
+        raise RSSFeedError(f"Failed to fetch RSS feed: {e}") from e
+
+
 def poll_once(conn, on_new_entry):
     """Perform a single polling iteration of the RSS feed."""
     try:
         logger.info(f"Polling RSS feed: {FEED_URL}")
-        feed = feedparser.parse(FEED_URL)
+        
+        # Fetch feed with authentication
+        feed_content = fetch_authenticated_feed(FEED_URL)
+        
+        # Parse the feed content
+        feed = feedparser.parse(feed_content)
         
         if feed.bozo:
             logger.warning(f"Feed parsing warning: {feed.bozo_exception}")

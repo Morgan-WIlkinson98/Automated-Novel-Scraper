@@ -484,4 +484,4 @@ if __name__ == "__main__":
     Path("exports").mkdir(exist_ok=True)
     
     # Run the app
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=6110, debug=True)

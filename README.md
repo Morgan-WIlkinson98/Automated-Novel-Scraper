@@ -62,6 +62,35 @@ Dependencies:
 - `readability-lxml` - Fallback extraction library
 - `beautifulsoup4` - Site override parsing
 - `lxml` - XML/HTML processing
+- `ebooklib` - EPUB generation
+- `flask` - Web UI
+
+## Configuration
+
+### Authentication
+
+NovelUpdates RSS feed may require authentication. Create a `config.py` file:
+
+```python
+# config.py
+RSS_FEED_URL = "https://www.novelupdates.com/rss/"
+
+# Option 1: Username/Password authentication
+NOVELUPDATES_USERNAME = "your_username"
+NOVELUPDATES_PASSWORD = "your_password"
+
+# Option 2: Cookie authentication (if you have session cookies)
+NOVELUPDATES_COOKIES = {
+    "session_id": "your_session_cookie",
+}
+
+# Polling interval (seconds)
+POLL_INTERVAL_SECONDS = 15 * 60  # 15 minutes
+```
+
+**Important:** `config.py` is excluded from git to protect your credentials. Create it locally and never commit it.
+
+If no authentication is needed, the scraper will work without `config.py` (though NovelUpdates may return empty results).
 
 ## Usage
 
@@ -76,6 +105,33 @@ This will:
 - Process new chapter releases
 - Extract and store chapters
 - Continue running indefinitely
+
+### Web UI
+
+A web interface is available to browse chapters, view statistics, and export to EPUB:
+
+```bash
+python web_ui.py
+```
+
+Then open http://localhost:6110 in your browser.
+
+**Web UI Features:**
+- Dashboard with statistics
+- Browse all series and chapters
+- Read chapters online
+- Export to EPUB format
+- REST API endpoints
+
+### Export to EPUB
+
+Export all chapters to EPUB format:
+
+```bash
+python export.py
+```
+
+Or use the web UI to export specific series.
 
 ### Individual Components
 
