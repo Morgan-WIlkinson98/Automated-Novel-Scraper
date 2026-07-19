@@ -71,10 +71,12 @@ def resolve_final_url(url: str, timeout: int = 15) -> str:
         logger.error(f"Timeout resolving {url}: {e}")
         raise TimeoutError(f"Timeout resolving URL {url}") from e
     except requests.HTTPError as e:
-        logger.error(f"HTTP error resolving {url}: {e}")
+        # Log as warning rather than error; callers like the browser fallback
+        # will handle 403/Cloudflare and log a real error only if that also fails.
+        logger.warning(f"HTTP error resolving {url}: {e}")
         raise HTTPError(f"HTTP error resolving URL {url}: {e}") from e
     except requests.RequestException as e:
-        logger.error(f"Failed to resolve {url}: {e}")
+        logger.warning(f"Failed to resolve {url}: {e}")
         raise HTTPError(f"Failed to resolve URL {url}: {e}") from e
 
 

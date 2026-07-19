@@ -15,6 +15,16 @@ from typing import Optional
 from politeness import polite_get
 from exceptions import ExtractionError, QualityError, ValidationError
 
+
+def _fetch_rendered_html(url: str) -> Optional[str]:
+    """Use Playwright to render JS-heavy pages as a last resort."""
+    try:
+        from browser import get_page_html
+        return get_page_html(url, timeout=60)
+    except Exception as e:
+        logger.warning(f"Browser-rendered fetch failed for {url}: {e}")
+        return None
+
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 15
@@ -153,6 +163,19 @@ def extract_chapter(url: str) -> ExtractionResult:
             if quality_check(alt_text) and (not text or len(alt_text) > len(text)):
                 title, text, method = alt_title, alt_text, "readability"
                 logger.info(f"Readability extraction succeeded for {url}")
+
+        # Last resort: render the page with Playwright for JS-heavy sites
+        if not quality_check(text):
+            logger.info(f"Readability also failed, trying browser-rendered fetch for {url}")
+            rendered_html = _fetch_rendered_html(url)
+            if rendered_html:
+                logger.debug(f"Fetched rendered HTML ({len(rendered_html)} chars) for {url}")
+                rendered_title, rendered_text = _extract_with_trafilatura(rendered_html, url)
+                if not quality_check(rendered_text):
+                    rendered_title, rendered_text = _extract_with_readability(rendered_html)
+                if quality_check(rendered_text) and (not text or len(rendered_text) > len(text)):
+                    title, text, method = rendered_title, rendered_text, "browser"
+                    logger.info(f"Browser-rendered extraction succeeded for {url}")
 
         text = clean_text(text) if text else text
         passed = quality_check(text)
