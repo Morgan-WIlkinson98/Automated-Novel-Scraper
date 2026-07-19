@@ -255,12 +255,17 @@ def export_selected_chapters_to_epub(series_name: str, chapter_urls: List[str], 
 
 
 def get_series_list(db_path: Optional[str] = None) -> List[str]:
-    """Get list of all series in the database."""
+    """Get list of all series from both chapters and series_info."""
     if db_path is None:
         db_path = _get_db_path()
     try:
         conn = sqlite3.connect(db_path)
-        cursor = conn.execute("SELECT DISTINCT series FROM chapters ORDER BY series")
+        cursor = conn.execute("""
+            SELECT DISTINCT series FROM chapters
+            UNION
+            SELECT DISTINCT series FROM series_info
+            ORDER BY series
+        """)
         series = [row[0] for row in cursor if row[0]]
         conn.close()
         return series

@@ -74,6 +74,14 @@ def handle_new_entry(entry):
         
         logger.info(f"Processing entry: {getattr(entry, 'title', 'unknown')}")
         
+        # Capture series name and URL from RSS metadata as soon as possible,
+        # so new series appear in the list even if extraction fails.
+        series_name = clean_series_name(getattr(entry, "title", "unknown"))
+        chapter_summary = getattr(entry, "summary", "")
+        series_url_match = re.search(r'https?://www\.novelupdates\.com/series/[^/\s]+/?', chapter_summary)
+        if series_url_match:
+            save_series_info(db, series=series_name, url=series_url_match.group(0))
+        
         # Resolve link
         try:
             final_url = resolve_final_url(feed_link)
@@ -107,8 +115,6 @@ def handle_new_entry(entry):
 
         # Save to database
         try:
-            series_name = clean_series_name(getattr(entry, "title", "unknown"))
-            chapter_summary = getattr(entry, "summary", "")
             save_chapter(
                 db,
                 url=final_url,
@@ -119,14 +125,11 @@ def handle_new_entry(entry):
                 method=result.method,
             )
             
-            # Extract and save series URL from the RSS summary, then sync in background
-            series_url_match = re.search(r'https?://www\.novelupdates\.com/series/[^/\s]+/?', chapter_summary)
+            # Kick off a background sync for the series page metadata
             if series_url_match:
-                series_url = series_url_match.group(0)
-                save_series_info(db, series=series_name, url=series_url)
                 threading.Thread(
                     target=_sync_series_info_async,
-                    args=(series_name, series_url),
+                    args=(series_name, series_url_match.group(0)),
                     daemon=True,
                 ).start()
             
