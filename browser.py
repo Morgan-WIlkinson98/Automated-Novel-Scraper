@@ -42,34 +42,60 @@ def resolve_with_browser(url: str, timeout: int = 45) -> str:
     settings = get_settings()
     cookies = settings.NOVELUPDATES_COOKIES if isinstance(settings.NOVELUPDATES_COOKIES, dict) else None
     
+    # Use the same browser fingerprint as the provided curl command
+    user_agent = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+    )
+    
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-features=IsolateOrigins,site-per-process",
-                    "--disable-web-security",
-                ]
-            )
-            context_options = {
-                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "viewport": {"width": 1280, "height": 800},
-                "extra_http_headers": {
+            # Try to use installed Google Chrome for better fingerprint matching
+            try:
+                browser = p.chromium.launch(
+                    headless=True,
+                    channel="chrome",
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--disable-features=IsolateOrigins,site-per-process",
+                        "--disable-web-security",
+                    ]
+                )
+            except Exception as e:
+                logger.warning(f"Could not launch Google Chrome ({e}), falling back to Playwright Chromium")
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--disable-features=IsolateOrigins,site-per-process",
+                        "--disable-web-security",
+                    ]
+                )
+            
+            context = browser.new_context(
+                user_agent=user_agent,
+                viewport={"width": 1280, "height": 800},
+                extra_http_headers={
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
                     "Accept-Language": "en-US,en;q=0.9",
                     "Referer": "https://www.novelupdates.com/",
+                    "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"macOS"',
+                    "Upgrade-Insecure-Requests": "1",
                 },
-            }
+            )
+            
             if cookies:
-                # Format cookies for Playwright context
-                domain = '.novelupdates.com'
+                # Format cookies for Playwright context (must include domain and path)
                 context_cookies = [
-                    {"name": k, "value": v, "domain": domain, "path": "/"}
+                    {"name": k, "value": v, "domain": ".novelupdates.com", "path": "/"}
                     for k, v in cookies.items()
                 ]
-                context_options["cookies"] = context_cookies
-            
-            context = browser.new_context(**context_options)
+                try:
+                    context.add_cookies(context_cookies)
+                except Exception as e:
+                    logger.warning(f"Failed to add some cookies: {e}")
             
             # Hide webdriver property to avoid bot detection
             context.add_init_script("""
