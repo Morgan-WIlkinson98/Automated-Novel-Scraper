@@ -233,34 +233,63 @@ def export_series_chapters(series_name):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/series/<series_name>/url', methods=['POST'])
+def set_series_url(series_name):
+    """Manually set or update the NovelUpdates series URL."""
+    try:
+        data = request.json or {}
+        series_url = data.get('url', '').strip()
+        if not series_url:
+            return jsonify({'success': False, 'error': 'URL is required'}), 400
+        
+        conn = get_db_connection()
+        existing = get_series_info(conn, series_name)
+        save_series_info(
+            conn,
+            series_name,
+            url=series_url,
+            synopsis=existing.get('synopsis'),
+            available_chapters=existing.get('available_chapters')
+        )
+        conn.close()
+        
+        return jsonify({'success': True, 'url': series_url})
+    except Exception as e:
+        logger.error(f"Set series URL {series_name} failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/series/<series_name>/sync', methods=['POST'])
 def sync_series(series_name):
     """Scrape the NovelUpdates series page for synopsis and chapter list."""
     try:
+        data = request.json or {}
+        provided_url = data.get('url', '').strip()
+        
         conn = get_db_connection()
         series_info = get_series_info(conn, series_name)
         conn.close()
         
-        series_url = series_info.get('url')
+        series_url = provided_url or series_info.get('url')
         if not series_url:
             return jsonify({'success': False, 'error': 'No series URL stored. Wait for an RSS entry or set the URL manually.'}), 400
         
-        data = scrape_series_page(series_url)
+        scraped = scrape_series_page(series_url)
         
         conn = get_db_connection()
         save_series_info(
             conn,
             series_name,
             url=series_url,
-            synopsis=data['synopsis'],
-            available_chapters=json.dumps(data['chapters'])
+            synopsis=scraped['synopsis'],
+            available_chapters=json.dumps(scraped['chapters'])
         )
         conn.close()
         
         return jsonify({
             'success': True,
-            'chapters': len(data['chapters']),
-            'synopsis': data['synopsis'][:500] if data['synopsis'] else ''
+            'chapters': len(scraped['chapters']),
+            'synopsis': scraped['synopsis'][:500] if scraped['synopsis'] else ''
         })
     except Exception as e:
         logger.error(f"Sync series {series_name} failed: {e}")
