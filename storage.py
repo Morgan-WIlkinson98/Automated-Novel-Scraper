@@ -5,12 +5,15 @@ storage.py
 import sqlite3
 import logging
 import time
+from settings import get_settings
 from exceptions import DatabaseError, ValidationError
 
 logger = logging.getLogger(__name__)
 
-def init_storage(path="chapters.db"):
+def init_storage(path=None):
     """Initialize the chapters database."""
+    if path is None:
+        path = get_settings().CHAPTERS_DB
     try:
         conn = sqlite3.connect(path)
         conn.execute("""

@@ -6,21 +6,18 @@ site_overrides, storage, politeness
 
 import logging
 from urllib.parse import urlparse
+from settings import get_settings
 from rss_watcher import run_forever
-from link_resolver import resolve_final_url
+from link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
 from generic_extractor import extract_chapter
 from site_overrides import extract_with_override
 from storage import init_storage, save_chapter
 from politeness import polite_get
 from exceptions import DatabaseError, HTTPError, ValidationError
+from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 
 db = None
 
@@ -91,10 +88,13 @@ def main():
     """Main entry point with proper initialization and cleanup."""
     global db
     
+    setup_logging()
+    settings = get_settings()
+    
     logger.info("Starting novel scraper")
     
     try:
-        db = init_storage()
+        db = init_storage(settings.CHAPTERS_DB)
         logger.info("Database initialized")
         
         run_forever(handle_new_entry)

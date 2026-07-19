@@ -6,8 +6,36 @@ Depends on: requests
 import requests
 import logging
 from exceptions import HTTPError, TimeoutError, ValidationError
+from settings import get_settings
+from browser import resolve_with_browser, _is_novelupdates_extnu
 
 logger = logging.getLogger(__name__)
+
+
+def _get_request_kwargs(timeout: int):
+    """Build request kwargs with headers, auth, and cookies from settings."""
+    settings = get_settings()
+    kwargs = {
+        "timeout": timeout,
+        "headers": {
+            "User-Agent": settings.USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate",
+            "DNT": "1",
+            "Connection": "keep-alive",
+        },
+    }
+    
+    cookies = settings.NOVELUPDATES_COOKIES if isinstance(settings.NOVELUPDATES_COOKIES, dict) else None
+    if cookies:
+        kwargs["cookies"] = cookies
+    
+    if settings.NOVELUPDATES_USERNAME and settings.NOVELUPDATES_PASSWORD:
+        kwargs["auth"] = (settings.NOVELUPDATES_USERNAME, settings.NOVELUPDATES_PASSWORD)
+    
+    return kwargs
+
 
 def resolve_final_url(url: str, timeout: int = 15) -> str:
     """Follow redirects and return the final destination URL."""
@@ -15,10 +43,11 @@ def resolve_final_url(url: str, timeout: int = 15) -> str:
         raise ValidationError(f"Invalid URL: {url}")
 
     logger.debug(f"Resolving URL: {url}")
+    request_kwargs = _get_request_kwargs(timeout)
 
     # Try HEAD first (lighter)
     try:
-        resp = requests.head(url, allow_redirects=True, timeout=timeout)
+        resp = requests.head(url, allow_redirects=True, **request_kwargs)
         resp.raise_for_status()
         final_url = resp.url
         logger.debug(f"Resolved via HEAD: {url} -> {final_url}")
@@ -32,7 +61,7 @@ def resolve_final_url(url: str, timeout: int = 15) -> str:
 
     # Fallback to GET (some servers reject HEAD)
     try:
-        resp = requests.get(url, allow_redirects=True, timeout=timeout, stream=True)
+        resp = requests.get(url, allow_redirects=True, stream=True, **request_kwargs)
         resp.raise_for_status()
         final_url = resp.url
         resp.close()
@@ -47,3 +76,18 @@ def resolve_final_url(url: str, timeout: int = 15) -> str:
     except requests.RequestException as e:
         logger.error(f"Failed to resolve {url}: {e}")
         raise HTTPError(f"Failed to resolve URL {url}: {e}") from e
+
+
+def resolve_final_url_with_browser_fallback(url: str, timeout: int = 15, use_browser: bool = True) -> str:
+    """
+    Try to resolve URL with HTTP first, fall back to browser automation
+    for Cloudflare-protected NovelUpdates extnu links.
+    """
+    try:
+        return resolve_final_url(url, timeout)
+    except HTTPError as e:
+        if use_browser and _is_novelupdates_extnu(url):
+            from browser import resolve_with_browser
+            logger.warning(f"HTTP resolution failed for NovelUpdates link, trying browser: {url}")
+            return resolve_with_browser(url, timeout=45)
+        raise

@@ -5,19 +5,31 @@ Depends on: ebooklib
     pip install ebooklib
 """
 
-import os
 import sqlite3
 import logging
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional
 from ebooklib import epub
+from settings import get_settings
 from exceptions import DatabaseError, ValidationError
 
 logger = logging.getLogger(__name__)
 
 
-def get_chapters_by_series(db_path: str = "chapters.db") -> dict:
+def _get_db_path() -> str:
+    """Get the chapters database path from settings."""
+    return get_settings().CHAPTERS_DB
+
+
+def _get_export_dir() -> str:
+    """Get the export directory from settings."""
+    return get_settings().EXPORT_DIR
+
+
+def get_chapters_by_series(db_path: Optional[str] = None) -> dict:
     """Retrieve all chapters grouped by series from database."""
+    if db_path is None:
+        db_path = _get_db_path()
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -42,12 +54,15 @@ def get_chapters_by_series(db_path: str = "chapters.db") -> dict:
         raise DatabaseError(f"Failed to retrieve chapters: {e}") from e
 
 
-def create_epub(series_name: str, chapters: List[dict], output_dir: str = "exports") -> str:
+def create_epub(series_name: str, chapters: List[dict], output_dir: Optional[str] = None) -> str:
     """Create an EPUB file for a series."""
     if not series_name:
         raise ValidationError("Series name cannot be empty")
     if not chapters:
         raise ValidationError("Chapters list cannot be empty")
+    
+    if output_dir is None:
+        output_dir = _get_export_dir()
     
     # Sanitize series name for filename
     safe_name = "".join(c for c in series_name if c.isalnum() or c in (' ', '-', '_')).strip()
@@ -144,8 +159,13 @@ def create_epub(series_name: str, chapters: List[dict], output_dir: str = "expor
     return str(epub_path)
 
 
-def export_all_to_epub(db_path: str = "chapters.db", output_dir: str = "exports") -> List[str]:
+def export_all_to_epub(db_path: Optional[str] = None, output_dir: Optional[str] = None) -> List[str]:
     """Export all series to EPUB files."""
+    if db_path is None:
+        db_path = _get_db_path()
+    if output_dir is None:
+        output_dir = _get_export_dir()
+    
     chapters_by_series = get_chapters_by_series(db_path)
     
     if not chapters_by_series:
@@ -165,8 +185,13 @@ def export_all_to_epub(db_path: str = "chapters.db", output_dir: str = "exports"
     return exported_files
 
 
-def export_series_to_epub(series_name: str, db_path: str = "chapters.db", output_dir: str = "exports") -> str:
+def export_series_to_epub(series_name: str, db_path: Optional[str] = None, output_dir: Optional[str] = None) -> str:
     """Export a specific series to EPUB."""
+    if db_path is None:
+        db_path = _get_db_path()
+    if output_dir is None:
+        output_dir = _get_export_dir()
+    
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -190,8 +215,10 @@ def export_series_to_epub(series_name: str, db_path: str = "chapters.db", output
         raise DatabaseError(f"Failed to retrieve chapters: {e}") from e
 
 
-def get_series_list(db_path: str = "chapters.db") -> List[str]:
+def get_series_list(db_path: Optional[str] = None) -> List[str]:
     """Get list of all series in the database."""
+    if db_path is None:
+        db_path = _get_db_path()
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT DISTINCT series FROM chapters ORDER BY series")
@@ -203,8 +230,10 @@ def get_series_list(db_path: str = "chapters.db") -> List[str]:
         raise DatabaseError(f"Failed to get series list: {e}") from e
 
 
-def get_statistics(db_path: str = "chapters.db") -> dict:
+def get_statistics(db_path: Optional[str] = None) -> dict:
     """Get statistics about stored chapters."""
+    if db_path is None:
+        db_path = _get_db_path()
     try:
         conn = sqlite3.connect(db_path)
         

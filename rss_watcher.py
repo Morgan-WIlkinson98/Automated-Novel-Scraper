@@ -11,23 +11,13 @@ import time
 import requests
 from exceptions import DatabaseError, RSSFeedError, ValidationError
 
+from settings import get_settings
+
 logger = logging.getLogger(__name__)
 
-# Try to import config, use defaults if not available
-try:
-    from config import (
-        RSS_FEED_URL,
-        POLL_INTERVAL_SECONDS,
-        NOVELUPDATES_USERNAME,
-        NOVELUPDATES_PASSWORD,
-        NOVELUPDATES_COOKIES,
-    )
-except ImportError:
-    RSS_FEED_URL = "https://www.novelupdates.com/rss/"
-    POLL_INTERVAL_SECONDS = 15 * 60
-    NOVELUPDATES_USERNAME = None
-    NOVELUPDATES_PASSWORD = None
-    NOVELUPDATES_COOKIES = None
+def _get_config():
+    """Get current settings."""
+    return get_settings()
 
 
 def init_db(path="seen_entries.db"):
@@ -82,17 +72,18 @@ def mark_seen(conn, guid: str, link: str):
 def fetch_authenticated_feed(url: str) -> str:
     """Fetch RSS feed with authentication if credentials are provided."""
     try:
+        config = _get_config()
         headers = {
-            'User-Agent': 'Mozilla/5.0 (compatible; NovelScraper/1.0)'
+            'User-Agent': config.USER_AGENT
         }
         
         # Use cookies if provided
-        cookies = NOVELUPDATES_COOKIES if NOVELUPDATES_COOKIES else None
+        cookies = config.NOVELUPDATES_COOKIES if isinstance(config.NOVELUPDATES_COOKIES, dict) else None
         
         # Use basic auth if username/password provided
         auth = None
-        if NOVELUPDATES_USERNAME and NOVELUPDATES_PASSWORD:
-            auth = (NOVELUPDATES_USERNAME, NOVELUPDATES_PASSWORD)
+        if config.NOVELUPDATES_USERNAME and config.NOVELUPDATES_PASSWORD:
+            auth = (config.NOVELUPDATES_USERNAME, config.NOVELUPDATES_PASSWORD)
             logger.info("Using username/password authentication for RSS feed")
         elif cookies:
             logger.info("Using cookie authentication for RSS feed")
@@ -110,10 +101,11 @@ def fetch_authenticated_feed(url: str) -> str:
 def poll_once(conn, on_new_entry):
     """Perform a single polling iteration of the RSS feed."""
     try:
-        logger.info(f"Polling RSS feed: {FEED_URL}")
+        config = _get_config()
+        logger.info(f"Polling RSS feed: {config.RSS_FEED_URL}")
         
         # Fetch feed with authentication
-        feed_content = fetch_authenticated_feed(FEED_URL)
+        feed_content = fetch_authenticated_feed(config.RSS_FEED_URL)
         
         # Parse the feed content
         feed = feedparser.parse(feed_content)
@@ -153,10 +145,11 @@ def poll_once(conn, on_new_entry):
 
 def run_forever(on_new_entry):
     """Run the RSS watcher in a continuous loop."""
+    config = _get_config()
     logger.info("Starting RSS watcher")
     conn = None
     try:
-        conn = init_db()
+        conn = init_db(config.SEEN_ENTRIES_DB)
         while True:
             try:
                 poll_once(conn, on_new_entry)
@@ -167,14 +160,14 @@ def run_forever(on_new_entry):
                 try:
                     if conn:
                         conn.close()
-                    conn = init_db()
+                    conn = init_db(config.SEEN_ENTRIES_DB)
                 except Exception as e2:
                     logger.error(f"Failed to reinitialize database: {e2}")
-                    time.sleep(POLL_INTERVAL_SECONDS)
+                    time.sleep(config.POLL_INTERVAL_SECONDS)
                     continue
             
-            logger.debug(f"Sleeping for {POLL_INTERVAL_SECONDS} seconds")
-            time.sleep(POLL_INTERVAL_SECONDS)
+            logger.debug(f"Sleeping for {config.POLL_INTERVAL_SECONDS} seconds")
+            time.sleep(config.POLL_INTERVAL_SECONDS)
     except KeyboardInterrupt:
         logger.info("RSS watcher stopped by user")
     except Exception as e:
