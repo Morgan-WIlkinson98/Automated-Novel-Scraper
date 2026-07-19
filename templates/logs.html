@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Logs - Novel Scraper{% endblock %}
+{% block content %}
+    <div class="card">
+        <h2>📝 Live Logs</h2>
+        <p>Real-time logs from the scraper. Select a category below.</p>
+    </div>
+    
+    <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
+            <div class="tabs" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button class="tab-btn active" onclick="loadLogs('all')">All</button>
+                <button class="tab-btn" onclick="loadLogs('rss')">RSS Feed</button>
+                <button class="tab-btn" onclick="loadLogs('auth')">Authentication</button>
+                <button class="tab-btn" onclick="loadLogs('extract')">Extraction</button>
+                <button class="tab-btn" onclick="loadLogs('download')">Download/Save</button>
+                <button class="tab-btn" onclick="loadLogs('error')" style="background:#e74c3c;color:white;">Errors/Warnings</button>
+            </div>
+            <div>
+                <button class="tab-btn" onclick="copyLogs()" style="margin-right: 10px;">📋 Copy</button>
+            </div>
+        </div>
+        <pre id="log-content" style="background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 8px; height: 500px; overflow-y: auto; font-family: 'Monaco', 'Menlo', monospace; font-size: 12px;"></pre>
+    </div>
+    
+    <style>
+        .tabs {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .tab-btn {
+            background: #e0e0e0;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .tab-btn:hover {
+            background: #d0d0d0;
+        }
+        .tab-btn.active {
+            background: #3498db;
+            color: white;
+        }
+    </style>
+    
+    <script>
+        let currentCategory = 'all';
+        
+        async function loadLogs(category) {
+            currentCategory = category;
+            
+            // Update active tab
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            try {
+                const response = await fetch(`/api/logs?category=${category}&limit=200`);
+                const data = await response.json();
+                const logContent = document.getElementById('log-content');
+                if (data.lines && data.lines.length > 0) {
+                    logContent.textContent = data.lines.join('\n');
+                    logContent.scrollTop = logContent.scrollHeight;
+                } else {
+                    logContent.textContent = 'No logs yet. Start the scraper to generate logs.';
+                }
+            } catch (e) {
+                document.getElementById('log-content').textContent = 'Error loading logs: ' + e;
+            }
+        }
+        
+        async function copyLogs() {
+            const logContent = document.getElementById('log-content').textContent;
+            try {
+                await navigator.clipboard.writeText(logContent);
+                alert('Logs copied to clipboard');
+            } catch (e) {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = logContent;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('Logs copied to clipboard');
+            }
+        }
+        
+        async function stopApp() {
+            if (!confirm('Stop the scraper and web UI?')) return;
+            try {
+                const response = await fetch('/api/stop', { method: 'POST' });
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('log-content').textContent = 'Application stopped.';
+                    alert('Application stopped.');
+                } else {
+                    alert('Failed to stop: ' + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Stop request failed: ' + e);
+            }
+        }
+        
+        // Auto-refresh every 5 seconds
+        setInterval(() => {
+            const activeBtn = document.querySelector('.tab-btn.active');
+            if (activeBtn) {
+                activeBtn.click();
+            }
+        }, 5000);
+        
+        // Load all logs initially
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelector('.tab-btn').click();
+        });
+    </script>
+{% endblock %}

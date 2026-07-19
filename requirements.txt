@@ -1,0 +1,9 @@
+feedparser
+requests
+trafilatura
+readability-lxml
+beautifulsoup4
+lxml
+ebooklib
+flask
+playwright

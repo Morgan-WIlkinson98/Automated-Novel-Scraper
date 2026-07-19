@@ -1,0 +1,51 @@
+
+{% extends "base.html" %}
+{% block title %}Dashboard - Novel Scraper{% endblock %}
+{% block content %}
+    <div class="card">
+        <h2>📊 Statistics</h2>
+        <div class="stats-grid" style="margin-top: 20px;">
+            <div class="stat-card">
+                <h3>{{ stats.total_chapters }}</h3>
+                <p>Total Chapters</p>
+            </div>
+            <div class="stat-card">
+                <h3>{{ stats.total_series }}</h3>
+                <p>Total Series</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>📈 Extraction Methods</h2>
+        <table style="margin-top: 20px;">
+            <tr>
+                <th>Method</th>
+                <th>Count</th>
+            </tr>
+            {% for method, count in stats.by_method.items() %}
+            <tr>
+                <td>{{ method }}</td>
+                <td>{{ count }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+    
+    <div class="card">
+        <h2>🏆 Top Series</h2>
+        <table style="margin-top: 20px;">
+            <tr>
+                <th>Series</th>
+                <th>Chapters</th>
+            </tr>
+            {% for series, count in stats.by_series.items() %}
+            <tr>
+                <td><a href="/series/{{ series }}">{{ series }}</a></td>
+                <td>{{ count }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+{% endblock %}
+    

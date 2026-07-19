@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Raw RSS Feeds - Novel Scraper{% endblock %}
+{% block content %}
+    <div class="card">
+        <h2>📡 Raw RSS Feed Snapshots</h2>
+        <p>Each time the RSS feed is fetched, a snapshot of the raw XML is archived here.</p>
+    </div>
+
+    {% if files or latest %}
+    <div class="card">
+        <h3>Latest Feed</h3>
+        <ul>
+            {% if latest %}
+            <li><a href="/rss/view/{{ latest }}">{{ latest }}</a> (<a href="/rss/raw/{{ latest }}">download raw</a>)</li>
+            {% else %}
+            <li>No latest feed available.</li>
+            {% endif %}
+        </ul>
+    </div>
+
+    <div class="card">
+        <h3>Archived Feeds</h3>
+        {% if files %}
+        <ul>
+            {% for file in files %}
+            <li><a href="/rss/view/{{ file }}">{{ file }}</a> (<a href="/rss/raw/{{ file }}">download raw</a>)</li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p>No archived feeds yet.</p>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="card">
+        <p>No RSS feed snapshots stored yet. Click <strong>📡 Fetch RSS</strong> in the header to fetch one.</p>
+    </div>
+    {% endif %}
+{% endblock %}

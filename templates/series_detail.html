@@ -1,0 +1,384 @@
+
+{% extends "base.html" %}
+{% block title %}{{ series_name }} - Novel Scraper{% endblock %}
+{% block content %}
+    <div class="card">
+        <h2>📖 {{ series_name }}</h2>
+        <p>{{ chapters|length }} chapters · {{ total_words }} words</p>
+    </div>
+    
+    <div class="card">
+        <h3>Series Info</h3>
+        <div style="margin-bottom: 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="series-url" value="{{ series_info.url or '' }}" placeholder="https://www.novelupdates.com/series/..." style="flex: 1; min-width: 200px; padding: 8px;">
+            <button onclick="setSeriesUrl()" class="btn" style="margin-right: 10px;">� Set URL</button>
+            <button onclick="syncSeries()" class="btn">🔄 Sync</button>
+        </div>
+        <span id="sync-status" style="color: #666;"></span>
+        <p><strong>Synopsis:</strong> <span id="synopsis-text">{{ series_info.synopsis or 'Synopsis not available in the local database. Set the series URL and click Sync to fetch it.' }}</span></p>
+        <p><strong>Extraction methods:</strong>
+            {% for method, count in method_counts.items() %}
+                {{ method }} ({{ count }}){% if not loop.last %}, {% endif %}
+            {% endfor %}
+        </p>
+        <p><strong>Available on NovelUpdates:</strong> {{ available_chapters|length }} chapters</p>
+    </div>
+    
+    {% if active_downloads %}
+    <div class="card">
+        <h3>Active Downloads</h3>
+        {% for job in active_downloads %}
+        <div id="download-job-{{ job.job_id }}" style="margin-bottom: 12px;">
+            <div style="width:200px;height:20px;background:#eee;border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px;">
+                <div id="download-job-bar-{{ job.job_id }}" style="width:0%;height:100%;background:#27ae60;transition:width 0.3s;"></div>
+            </div>
+            <span id="download-job-text-{{ job.job_id }}">{{ job.message or 'Download in progress...' }} ({{ job.done or 0 }}/{{ job.total or '?' }})</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    <script type="application/json" id="active-downloads-data">
+{{ active_downloads | tojson }}
+    </script>
+    
+    <div class="card">
+        <h3>Bulk Download from NovelUpdates</h3>
+        <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <label>Start:</label>
+            <input type="number" id="bulk-start" style="width: 80px; padding: 5px;" placeholder="1">
+            <label>End:</label>
+            <input type="number" id="bulk-end" style="width: 80px; padding: 5px;" placeholder="226">
+            <button onclick="downloadRange()" class="btn btn-success">⬇ Download Range</button>
+            <button onclick="downloadAllAvailable()" class="btn">⬇ Download All Available</button>
+        </div>
+        <div id="bulk-status" style="margin-bottom: 10px;"></div>
+    </div>
+    
+    <div class="card">
+        <h3>Available Chapters on NovelUpdates</h3>
+        <div style="margin-bottom: 15px;">
+            <button onclick="toggleSelectAllAvailable()" class="btn" style="margin-right: 10px;">Toggle Select All</button>
+            <button onclick="downloadSelectedAvailable()" class="btn" style="margin-right: 10px;">⬇ Download Selected</button>
+        </div>
+        <div style="max-height: 500px; overflow-y: auto; border: 1px solid #444; border-radius: 5px;">
+            <table style="width: 100%; margin-top: 0;">
+                <thead>
+                    <tr>
+                        <th>Select</th>
+                        <th>#</th>
+                        <th>Title</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ch in available_chapters %}
+                    <tr>
+                        <td><input type="checkbox" class="available-checkbox" value="{{ ch['extnu_url'] }}" style="transform: scale(1.2);"></td>
+                        <td>{{ ch['number'] or '?' }}</td>
+                        <td>{{ ch['title'] }}</td>
+                        <td>{{ 'Downloaded' if ch['extnu_url'] in downloaded_urls else 'Not downloaded' }}</td>
+                        <td>
+                            {% if ch['extnu_url'] in downloaded_urls %}
+                            <a href="/chapter/{{ downloaded_urls[ch['extnu_url']]|urlencode }}" class="btn">Read</a>
+                            {% else %}
+                            <button data-extnu="{{ ch['extnu_url'] }}" onclick="downloadChapter(this.dataset.extnu)" class="btn btn-success">⬇ Download</button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div id="available-status" style="margin-top: 15px;"></div>
+    </div>
+    
+    <div class="card">
+        <h3>Downloaded Chapters</h3>
+        <div style="margin-bottom: 15px;">
+            <button onclick="toggleSelectAll()" class="btn" style="margin-right: 10px;">Toggle Select All</button>
+            <button onclick="downloadSelected()" class="btn" style="margin-right: 10px;">📦 Export Selected</button>
+            <button onclick="downloadAll()" class="btn btn-success">📦 Export All Downloaded</button>
+        </div>
+        <table style="margin-top: 20px;">
+            <tr>
+                <th>Select</th>
+                <th>Chapter</th>
+                <th>Title</th>
+                <th>Method</th>
+                <th>Date</th>
+                <th>Action</th>
+            </tr>
+            {% for chapter in chapters %}
+            <tr>
+                <td><input type="checkbox" class="chapter-checkbox" value="{{ chapter.url }}" style="transform: scale(1.2);"></td>
+                <td>{{ chapter.chapter_label }}</td>
+                <td>{{ chapter.title }}</td>
+                <td>{{ chapter.extraction_method }}</td>
+                <td>{{ chapter.fetched_at|round|int }}</td>
+                <td>
+                    <a href="/chapter/{{ chapter.url }}" class="btn">Read</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+        <div id="export-status" style="margin-top: 15px;"></div>
+    </div>
+    
+    <script>
+        const seriesName = '{{ series_name|e }}';
+        
+        function getSelectedUrls() {
+            return Array.from(document.querySelectorAll('.chapter-checkbox:checked')).map(cb => cb.value);
+        }
+        
+        function getSelectedAvailableUrls() {
+            return Array.from(document.querySelectorAll('.available-checkbox:checked')).map(cb => cb.value);
+        }
+        
+        function toggleSelectAll() {
+            const checkboxes = document.querySelectorAll('.chapter-checkbox');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            checkboxes.forEach(cb => cb.checked = !allChecked);
+        }
+        
+        function toggleSelectAllAvailable() {
+            const checkboxes = document.querySelectorAll('.available-checkbox');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            checkboxes.forEach(cb => cb.checked = !allChecked);
+        }
+        
+        function pollDownloadStatus(jobId, statusEl) {
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/download_status/' + encodeURIComponent(jobId));
+                    const data = await response.json();
+                    const pct = data.total ? Math.round((data.done / data.total) * 100) : 0;
+                    statusEl.innerHTML = `
+                        <div style="width:200px;height:20px;background:#eee;border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px;">
+                            <div style="width:${pct}%;height:100%;background:#27ae60;transition:width 0.3s;"></div>
+                        </div>
+                        <span>${data.done || 0}/${data.total || 0} ${data.message || ''}</span>`;
+                    
+                    if (data.error) {
+                        clearInterval(interval);
+                        statusEl.textContent = 'Error: ' + data.error;
+                        return;
+                    }
+                    if (data.completed) {
+                        clearInterval(interval);
+                        statusEl.innerHTML = '<span style="color:#27ae60;">' + (data.message || 'Done') + '</span> — reloading...';
+                        setTimeout(() => location.reload(), 1500);
+                    }
+                } catch (e) {
+                    clearInterval(interval);
+                    statusEl.textContent = 'Error: ' + e;
+                }
+            }, 1500);
+        }
+        
+        async function downloadChapter(extnuUrl) {
+            const statusEl = document.getElementById('available-status');
+            statusEl.textContent = 'Starting download...';
+            try {
+                const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ urls: [extnuUrl] })
+                });
+                const data = await response.json();
+                if (data.success && data.job_id) {
+                    pollDownloadStatus(data.job_id, statusEl);
+                } else {
+                    statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                }
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e;
+            }
+        }
+        
+        async function downloadSelectedAvailable() {
+            const urls = getSelectedAvailableUrls();
+            if (urls.length === 0) {
+                alert('Please select at least one chapter.');
+                return;
+            }
+            const statusEl = document.getElementById('available-status');
+            statusEl.textContent = 'Starting download...';
+            try {
+                const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ urls })
+                });
+                const data = await response.json();
+                if (data.success && data.job_id) {
+                    pollDownloadStatus(data.job_id, statusEl);
+                } else {
+                    statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                }
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e;
+            }
+        }
+        
+        async function setSeriesUrl() {
+            const url = document.getElementById('series-url').value.trim();
+            const statusEl = document.getElementById('sync-status');
+            if (!url) {
+                alert('Enter a NovelUpdates series URL.');
+                return;
+            }
+            statusEl.textContent = 'Saving URL...';
+            try {
+                const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/url', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                const data = await response.json();
+                statusEl.textContent = data.success ? 'URL saved.' : 'Error: ' + (data.error || 'Unknown');
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e;
+            }
+        }
+        
+        function pollSyncStatus(jobId, statusEl) {
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/sync_status/' + encodeURIComponent(jobId));
+                    const data = await response.json();
+                    statusEl.textContent = data.message || 'Syncing...';
+                    if (data.error) {
+                        clearInterval(interval);
+                        statusEl.textContent = 'Error: ' + data.error;
+                        return;
+                    }
+                    if (data.completed) {
+                        clearInterval(interval);
+                        statusEl.textContent = `Synced. ${data.chapters} chapters found.`;
+                        document.getElementById('synopsis-text').textContent = data.synopsis || 'Synopsis not available.';
+                        setTimeout(() => location.reload(), 1500);
+                    }
+                } catch (e) {
+                    clearInterval(interval);
+                    statusEl.textContent = 'Error: ' + e;
+                }
+            }, 1500);
+        }
+        
+        async function syncSeries() {
+            const statusEl = document.getElementById('sync-status');
+            const url = document.getElementById('series-url').value.trim();
+            statusEl.textContent = 'Starting sync...';
+            try {
+                const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(url ? { url } : {})
+                });
+                const data = await response.json();
+                if (data.success && data.job_id) {
+                    pollSyncStatus(data.job_id, statusEl);
+                } else {
+                    statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                }
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e;
+            }
+        }
+        
+        async function downloadRange() {
+            const start = parseInt(document.getElementById('bulk-start').value);
+            const end = parseInt(document.getElementById('bulk-end').value);
+            const statusEl = document.getElementById('bulk-status');
+            if (isNaN(start) || isNaN(end)) {
+                alert('Enter a start and end chapter number.');
+                return;
+            }
+            statusEl.textContent = 'Starting download...';
+            try {
+                const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ start, end })
+                });
+                const data = await response.json();
+                if (data.success && data.job_id) {
+                    pollDownloadStatus(data.job_id, statusEl);
+                } else {
+                    statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                }
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e;
+            }
+        }
+        
+        async function downloadAllAvailable() {
+            const statusEl = document.getElementById('bulk-status');
+            statusEl.textContent = 'Starting download...';
+            try {
+                const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ start: null, end: null })
+                });
+                const data = await response.json();
+                if (data.success && data.job_id) {
+                    pollDownloadStatus(data.job_id, statusEl);
+                } else {
+                    statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                }
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e;
+            }
+        }
+        
+        async function exportChapters(chapterUrls) {
+            const response = await fetch('/api/export/series/' + encodeURIComponent('{{ series_name|e }}') + '/chapters', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chapter_urls: chapterUrls })
+            });
+            const data = await response.json();
+            const statusEl = document.getElementById('export-status');
+            if (data.success) {
+                statusEl.innerHTML = '<div class="alert alert-success">Download ready: <a href="/download/' + encodeURIComponent(data.file) + '" download>Click here</a></div>';
+            } else {
+                statusEl.innerHTML = '<div class="alert alert-error">Error: ' + (data.error || 'Unknown error') + '</div>';
+            }
+        }
+        
+        async function downloadSelected() {
+            const urls = getSelectedUrls();
+            if (urls.length === 0) {
+                alert('Please select at least one chapter.');
+                return;
+            }
+            await exportChapters(urls);
+        }
+        
+        async function downloadAll() {
+            await exportChapters([]);
+        }
+        
+        // Resume polling for any active downloads when the page reloads
+        const activeDownloadsData = document.getElementById('active-downloads-data');
+        let activeJobs = [];
+        if (activeDownloadsData && activeDownloadsData.textContent) {
+            try {
+                activeJobs = JSON.parse(activeDownloadsData.textContent) || [];
+            } catch (e) { activeJobs = []; }
+        }
+        if (activeJobs && activeJobs.length) {
+            activeJobs.forEach(job => {
+                const el = document.getElementById('download-job-' + job.job_id);
+                if (el) {
+                    pollDownloadStatus(job.job_id, el);
+                }
+            });
+        }
+    </script>
+{% endblock %}
+    
