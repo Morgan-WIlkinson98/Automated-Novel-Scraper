@@ -9,20 +9,38 @@
     
     <div class="card">
         <h3>Series Info</h3>
-        <p><strong>Synopsis:</strong> <em>Synopsis not available in the local database.</em></p>
+        <div style="margin-bottom: 10px;">
+            <button onclick="syncSeries()" class="btn" style="margin-right: 10px;">🔄 Sync from NovelUpdates</button>
+            <span id="sync-status" style="color: #666;"></span>
+        </div>
+        <p><strong>Synopsis:</strong> <span id="synopsis-text">{{ series_info.synopsis or 'Synopsis not available in the local database. Click Sync to fetch it.' }}</span></p>
         <p><strong>Extraction methods:</strong>
             {% for method, count in method_counts.items() %}
                 {{ method }} ({{ count }}){% if not loop.last %}, {% endif %}
             {% endfor %}
         </p>
+        <p><strong>Available on NovelUpdates:</strong> {{ available_chapters|length }} chapters</p>
     </div>
     
     <div class="card">
-        <h3>Chapters</h3>
+        <h3>Bulk Download from NovelUpdates</h3>
+        <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <label>Start:</label>
+            <input type="number" id="bulk-start" style="width: 80px; padding: 5px;" placeholder="1">
+            <label>End:</label>
+            <input type="number" id="bulk-end" style="width: 80px; padding: 5px;" placeholder="226">
+            <button onclick="downloadRange()" class="btn btn-success">⬇ Download Range</button>
+            <button onclick="downloadAllAvailable()" class="btn">⬇ Download All Available</button>
+        </div>
+        <div id="bulk-status" style="margin-bottom: 10px;"></div>
+    </div>
+    
+    <div class="card">
+        <h3>Downloaded Chapters</h3>
         <div style="margin-bottom: 15px;">
             <button onclick="toggleSelectAll()" class="btn" style="margin-right: 10px;">Toggle Select All</button>
-            <button onclick="downloadSelected()" class="btn" style="margin-right: 10px;">📦 Download Selected</button>
-            <button onclick="downloadAll()" class="btn btn-success">📦 Download All</button>
+            <button onclick="downloadSelected()" class="btn" style="margin-right: 10px;">📦 Export Selected</button>
+            <button onclick="downloadAll()" class="btn btn-success">📦 Export All Downloaded</button>
         </div>
         <table style="margin-top: 20px;">
             <tr>
@@ -50,6 +68,8 @@
     </div>
     
     <script>
+        const seriesName = '{{ series_name|e }}';
+        
         function getSelectedUrls() {
             return Array.from(document.querySelectorAll('.chapter-checkbox:checked')).map(cb => cb.value);
         }
@@ -58,6 +78,62 @@
             const checkboxes = document.querySelectorAll('.chapter-checkbox');
             const allChecked = Array.from(checkboxes).every(cb => cb.checked);
             checkboxes.forEach(cb => cb.checked = !allChecked);
+        }
+        
+        async function syncSeries() {
+            const statusEl = document.getElementById('sync-status');
+            statusEl.textContent = 'Syncing...';
+            try {
+                const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/sync', { method: 'POST' });
+                const data = await response.json();
+                if (data.success) {
+                    statusEl.textContent = `Synced. ${data.chapters} chapters found.`;
+                    document.getElementById('synopsis-text').textContent = data.synopsis || 'Synopsis not available.';
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    statusEl.textContent = 'Error: ' + (data.error || 'Unknown');
+                }
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e;
+            }
+        }
+        
+        async function downloadRange() {
+            const start = parseInt(document.getElementById('bulk-start').value);
+            const end = parseInt(document.getElementById('bulk-end').value);
+            const statusEl = document.getElementById('bulk-status');
+            if (isNaN(start) || isNaN(end)) {
+                alert('Enter a start and end chapter number.');
+                return;
+            }
+            statusEl.textContent = 'Starting download...';
+            try {
+                const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ start, end })
+                });
+                const data = await response.json();
+                statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e;
+            }
+        }
+        
+        async function downloadAllAvailable() {
+            const statusEl = document.getElementById('bulk-status');
+            statusEl.textContent = 'Starting download...';
+            try {
+                const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ start: null, end: null })
+                });
+                const data = await response.json();
+                statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e;
+            }
         }
         
         async function exportChapters(chapterUrls) {

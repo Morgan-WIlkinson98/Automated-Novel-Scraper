@@ -12,7 +12,7 @@ from rss_watcher import run_forever
 from link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
 from generic_extractor import extract_chapter
 from site_overrides import extract_with_override
-from storage import init_storage, save_chapter
+from storage import init_storage, save_chapter, save_series_info
 from politeness import polite_get
 from exceptions import DatabaseError, HTTPError, ValidationError
 from logging_config import setup_logging
@@ -77,15 +77,23 @@ def handle_new_entry(entry):
 
         # Save to database
         try:
+            series_name = clean_series_name(getattr(entry, "title", "unknown"))
+            chapter_summary = getattr(entry, "summary", "")
             save_chapter(
                 db,
                 url=final_url,
-                series=clean_series_name(getattr(entry, "title", "unknown")),
-                chapter_label=getattr(entry, "summary", ""),
+                series=series_name,
+                chapter_label=chapter_summary,
                 title=result.title or "Untitled",
                 text=result.text,
                 method=result.method,
             )
+            
+            # Extract and save series URL from the RSS summary
+            series_url_match = re.search(r'https?://www\.novelupdates\.com/series/[^/\s]+/?', chapter_summary)
+            if series_url_match:
+                save_series_info(db, series=series_name, url=series_url_match.group(0))
+            
             logger.info(f"Saved: {result.title} ({result.method})")
         except DatabaseError as e:
             logger.error(f"Failed to save chapter {final_url}: {e}")

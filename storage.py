@@ -27,6 +27,15 @@ def init_storage(path=None):
                 fetched_at REAL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS series_info (
+                series TEXT PRIMARY KEY,
+                url TEXT,
+                synopsis TEXT,
+                available_chapters TEXT,
+                last_synced REAL
+            )
+        """)
         conn.commit()
         logger.info(f"Storage database initialized at {path}")
         return conn
@@ -54,3 +63,42 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
     except sqlite3.Error as e:
         logger.error(f"Failed to save chapter {url}: {e}")
         raise DatabaseError(f"Failed to save chapter: {e}") from e
+
+
+def save_series_info(conn, series: str, url: str = None, synopsis: str = None, available_chapters: str = None):
+    """Save or update metadata for a series."""
+    try:
+        if not series:
+            raise ValidationError("Series name cannot be empty")
+        conn.execute("""
+            INSERT INTO series_info (series, url, synopsis, available_chapters, last_synced)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(series) DO UPDATE SET
+                url = excluded.url,
+                synopsis = excluded.synopsis,
+                available_chapters = excluded.available_chapters,
+                last_synced = excluded.last_synced
+        """, (series, url, synopsis, available_chapters, time.time()))
+        conn.commit()
+        logger.info(f"Saved series info for: {series}")
+    except sqlite3.Error as e:
+        logger.error(f"Failed to save series info for {series}: {e}")
+        raise DatabaseError(f"Failed to save series info: {e}") from e
+
+
+def get_series_info(conn, series: str):
+    """Get metadata for a series."""
+    try:
+        cursor = conn.execute("SELECT url, synopsis, available_chapters, last_synced FROM series_info WHERE series = ?", (series,))
+        row = cursor.fetchone()
+        if row:
+            return {
+                'url': row[0],
+                'synopsis': row[1],
+                'available_chapters': row[2],
+                'last_synced': row[3],
+            }
+        return {}
+    except sqlite3.Error as e:
+        logger.error(f"Failed to get series info for {series}: {e}")
+        raise DatabaseError(f"Failed to get series info: {e}") from e

@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
 from export import get_statistics, get_series_list, export_all_to_epub, export_series_to_epub, export_selected_chapters_to_epub
+from storage import get_series_info, save_series_info
+from series_scraper import scrape_series_page, filter_chapters
 from settings import get_settings, reload_settings
 from exceptions import DatabaseError
 from logging_config import setup_logging as setup_app_logging, get_log_path
@@ -73,7 +75,15 @@ def series_detail(series_name):
         for c in chapters:
             method_counts[c['extraction_method']] = method_counts.get(c['extraction_method'], 0) + 1
         
+        series_info = get_series_info(conn, series_name)
         conn.close()
+        
+        available_chapters = []
+        if series_info.get('available_chapters'):
+            try:
+                available_chapters = json.loads(series_info['available_chapters'])
+            except json.JSONDecodeError:
+                pass
         
         return render_template(
             'series_detail.html',
@@ -81,6 +91,8 @@ def series_detail(series_name):
             chapters=chapters,
             total_words=total_words,
             method_counts=method_counts,
+            series_info=series_info,
+            available_chapters=available_chapters,
         )
     except Exception as e:
         logger.error(f"Error viewing series {series_name}: {e}")
@@ -219,6 +231,129 @@ def export_series_chapters(series_name):
     except Exception as e:
         logger.error(f"Export series chapters failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/series/<series_name>/sync', methods=['POST'])
+def sync_series(series_name):
+    """Scrape the NovelUpdates series page for synopsis and chapter list."""
+    try:
+        conn = get_db_connection()
+        series_info = get_series_info(conn, series_name)
+        conn.close()
+        
+        series_url = series_info.get('url')
+        if not series_url:
+            return jsonify({'success': False, 'error': 'No series URL stored. Wait for an RSS entry or set the URL manually.'}), 400
+        
+        data = scrape_series_page(series_url)
+        
+        conn = get_db_connection()
+        save_series_info(
+            conn,
+            series_name,
+            url=series_url,
+            synopsis=data['synopsis'],
+            available_chapters=json.dumps(data['chapters'])
+        )
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'chapters': len(data['chapters']),
+            'synopsis': data['synopsis'][:500] if data['synopsis'] else ''
+        })
+    except Exception as e:
+        logger.error(f"Sync series {series_name} failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/series/<series_name>/download', methods=['POST'])
+def download_series_chapters(series_name):
+    """Download a range of chapters from the NovelUpdates series page."""
+    try:
+        data = request.json or {}
+        start = data.get('start')
+        end = data.get('end')
+        
+        conn = get_db_connection()
+        series_info = get_series_info(conn, series_name)
+        conn.close()
+        
+        if not series_info.get('available_chapters'):
+            return jsonify({'success': False, 'error': 'Series not synced. Run Sync Series first.'}), 400
+        
+        chapters = json.loads(series_info['available_chapters'])
+        selected = filter_chapters(chapters, start, end)
+        
+        if not selected:
+            return jsonify({'success': False, 'error': f'No chapters found for range {start}-{end}'}), 404
+        
+        # Process in background so the request returns quickly
+        import threading
+        def _download():
+            _process_chapter_downloads(series_name, selected)
+        
+        thread = threading.Thread(target=_download, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Started downloading {len(selected)} chapters. Check logs for progress.'
+        })
+    except Exception as e:
+        logger.error(f"Download series {series_name} failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _process_chapter_downloads(series_name: str, chapters: list):
+    """Resolve and extract a list of chapters in the background."""
+    import sqlite3
+    from link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
+    from generic_extractor import extract_chapter
+    from site_overrides import extract_with_override
+    from politeness import polite_get
+    from storage import init_storage, save_chapter
+    from settings import get_settings
+    from exceptions import HTTPError, ValidationError
+    
+    settings = get_settings()
+    db = init_storage(settings.CHAPTERS_DB)
+    
+    for ch in chapters:
+        extnu_url = ch.get('extnu_url')
+        if not extnu_url:
+            continue
+        try:
+            final_url = resolve_final_url(extnu_url)
+            result = extract_chapter(final_url)
+            
+            if not result.passed_quality_check:
+                resp = polite_get(final_url)
+                if resp:
+                    override_text = extract_with_override(resp.text, urlparse(final_url).netloc)
+                    if override_text:
+                        result.text = override_text
+                        result.method = 'site_override'
+                        result.passed_quality_check = True
+                if not result.passed_quality_check:
+                    logger.warning(f"Skipping chapter {ch.get('number')} from {extnu_url}: extraction failed")
+                    continue
+            
+            save_chapter(
+                db,
+                url=final_url,
+                series=series_name,
+                chapter_label=ch.get('title', ''),
+                title=result.title or f"Chapter {ch.get('number')}",
+                text=result.text,
+                method=result.method,
+            )
+            logger.info(f"Downloaded chapter {ch.get('number')} for {series_name}")
+        except Exception as e:
+            logger.error(f"Failed to download chapter {ch.get('number')} for {series_name}: {e}")
+            continue
+    
+    db.close()
 
 
 @app.route('/download/<path:filename>')
