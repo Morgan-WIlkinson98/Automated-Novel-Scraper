@@ -5,7 +5,7 @@ Run this to check if your credentials work.
 
 import feedparser
 import requests
-from config import (
+from core.config import (
     RSS_FEED_URL,
     NOVELUPDATES_USERNAME,
     NOVELUPDATES_PASSWORD,

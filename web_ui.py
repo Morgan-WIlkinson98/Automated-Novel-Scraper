@@ -16,16 +16,16 @@ import time
 import uuid
 from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
-from export import get_statistics, get_series_list, export_all_to_epub, export_series_to_epub, export_selected_chapters_to_epub
-from storage import get_series_info, save_series_info
-from series_scraper import scrape_series_page, filter_chapters, _extract_series_url_from_summary
-from settings import get_settings, reload_settings
-from exceptions import DatabaseError
-from logging_config import setup_logging as setup_app_logging, get_log_path
-from curl_parser import parse_curl_command
+from data.export import get_statistics, get_series_list, export_all_to_epub, export_series_to_epub, export_selected_chapters_to_epub
+from data.storage import get_series_info, save_series_info
+from scraping.series_scraper import scrape_series_page, filter_chapters, _extract_series_url_from_summary
+from core.settings import get_settings, reload_settings
+from core.exceptions import DatabaseError
+from core.logging_config import setup_logging as setup_app_logging, get_log_path
+from auth.curl_parser import parse_curl_command
 from main import handle_new_entry, clean_series_name
 import feedparser
-from rss_watcher import init_db as init_seen_db, poll_once
+from rss.rss_watcher import init_db as init_seen_db, poll_once
 
 logger = logging.getLogger(__name__)
 

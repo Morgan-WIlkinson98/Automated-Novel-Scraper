@@ -7,7 +7,7 @@ then update config.py via set_cookies.py.
 import re
 import sys
 from pathlib import Path
-from set_cookies import parse_cookie_string, update_config_cookies
+from auth.set_cookies import parse_cookie_string, update_config_cookies
 
 
 def extract_cookie_string_from_curl(text: str) -> str:

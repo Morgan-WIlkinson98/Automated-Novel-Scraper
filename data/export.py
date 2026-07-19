@@ -10,8 +10,8 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 from ebooklib import epub
-from settings import get_settings
-from exceptions import DatabaseError, ValidationError
+from core.settings import get_settings
+from core.exceptions import DatabaseError, ValidationError
 
 logger = logging.getLogger(__name__)
 

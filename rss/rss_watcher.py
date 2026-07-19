@@ -11,9 +11,9 @@ import time
 import requests
 from datetime import datetime
 from pathlib import Path
-from exceptions import DatabaseError, RSSFeedError, ValidationError
+from core.exceptions import DatabaseError, RSSFeedError, ValidationError
 
-from settings import get_settings
+from core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 

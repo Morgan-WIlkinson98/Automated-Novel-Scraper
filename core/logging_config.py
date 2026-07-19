@@ -6,7 +6,7 @@ Centralized logging configuration for the application.
 import logging
 import logging.handlers
 from pathlib import Path
-from settings import get_settings
+from core.settings import get_settings
 
 
 def setup_logging(level: int = logging.INFO, log_dir: str = None):

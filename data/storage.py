@@ -5,8 +5,8 @@ storage.py
 import sqlite3
 import logging
 import time
-from settings import get_settings
-from exceptions import DatabaseError, ValidationError
+from core.settings import get_settings
+from core.exceptions import DatabaseError, ValidationError
 
 logger = logging.getLogger(__name__)
 

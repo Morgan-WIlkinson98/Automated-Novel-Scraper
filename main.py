@@ -9,16 +9,16 @@ import json
 import re
 import threading
 from urllib.parse import urlparse
-from settings import get_settings
-from rss_watcher import run_forever
-from link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
-from generic_extractor import extract_chapter
-from site_overrides import extract_with_override
-from storage import init_storage, save_chapter, save_series_info
-from politeness import polite_get
-from exceptions import DatabaseError, HTTPError, ValidationError
-from logging_config import setup_logging
-from series_scraper import scrape_series_page
+from core.settings import get_settings
+from rss.rss_watcher import run_forever
+from scraping.link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
+from scraping.generic_extractor import extract_chapter
+from scraping.site_overrides import extract_with_override
+from data.storage import init_storage, save_chapter, save_series_info
+from scraping.politeness import polite_get
+from core.exceptions import DatabaseError, HTTPError, ValidationError
+from core.logging_config import setup_logging
+from scraping.series_scraper import scrape_series_page
 
 logger = logging.getLogger(__name__)
 

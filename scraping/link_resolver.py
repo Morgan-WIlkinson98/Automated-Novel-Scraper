@@ -5,9 +5,9 @@ Depends on: requests
 
 import requests
 import logging
-from exceptions import HTTPError, TimeoutError, ValidationError
-from settings import get_settings
-from browser import resolve_with_browser, _is_novelupdates_extnu
+from core.exceptions import HTTPError, TimeoutError, ValidationError
+from core.settings import get_settings
+from scraping.browser import resolve_with_browser, _is_novelupdates_extnu
 
 logger = logging.getLogger(__name__)
 

@@ -10,7 +10,7 @@ import logging
 import subprocess
 import time
 from pathlib import Path
-from logging_config import setup_logging
+from core.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 

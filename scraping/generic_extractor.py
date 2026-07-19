@@ -12,8 +12,8 @@ import trafilatura
 from readability import Document
 from dataclasses import dataclass
 from typing import Optional
-from politeness import polite_get
-from exceptions import ExtractionError, QualityError, ValidationError
+from scraping.politeness import polite_get
+from core.exceptions import ExtractionError, QualityError, ValidationError
 
 
 def _fetch_rendered_html(url: str) -> Optional[str]:

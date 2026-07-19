@@ -8,7 +8,7 @@ import requests
 import logging
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
-from exceptions import RobotsTxtError, HTTPError, TimeoutError, ValidationError
+from core.exceptions import RobotsTxtError, HTTPError, TimeoutError, ValidationError
 
 logger = logging.getLogger(__name__)
 

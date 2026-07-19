@@ -20,7 +20,9 @@ def parse_cookie_string(cookie_string: str) -> dict:
     return cookies
 
 
-def update_config_cookies(cookies: dict, config_path: str = "config.py"):
+def update_config_cookies(cookies: dict, config_path: str = None):
+    if config_path is None:
+        config_path = str(Path(__file__).resolve().parents[1] / "core" / "config.py")
     """Update NOVELUPDATES_COOKIES in config.py."""
     config_file = Path(config_path)
     if not config_file.exists():

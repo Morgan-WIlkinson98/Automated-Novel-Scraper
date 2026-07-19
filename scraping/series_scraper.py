@@ -10,7 +10,7 @@ import re
 import time
 from typing import List, Optional, Dict
 from urllib.parse import urljoin, urlparse
-from exceptions import HTTPError
+from core.exceptions import HTTPError
 
 logger = logging.getLogger(__name__)
 

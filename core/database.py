@@ -6,7 +6,7 @@ Database connection manager with context managers.
 import sqlite3
 import logging
 from contextlib import contextmanager
-from exceptions import DatabaseError
+from core.exceptions import DatabaseError
 
 logger = logging.getLogger(__name__)
 

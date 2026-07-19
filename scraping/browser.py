@@ -9,7 +9,7 @@ Depends on: playwright
 import logging
 from contextlib import contextmanager
 from urllib.parse import urlparse
-from exceptions import HTTPError, TimeoutError, ValidationError
+from core.exceptions import HTTPError, TimeoutError, ValidationError
 
 logger = logging.getLogger(__name__)
 
