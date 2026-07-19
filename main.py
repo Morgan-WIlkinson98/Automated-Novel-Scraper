@@ -5,6 +5,7 @@ site_overrides, storage, politeness
 """
 
 import logging
+import re
 from urllib.parse import urlparse
 from settings import get_settings
 from rss_watcher import run_forever
@@ -17,6 +18,18 @@ from exceptions import DatabaseError, HTTPError, ValidationError
 from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
+
+
+def clean_series_name(title: str) -> str:
+    """Remove trailing chapter labels like ' c226' from an RSS entry title."""
+    if not title:
+        return "Unknown"
+    # Strip common trailing chapter patterns: c123, c 123, chapter 123, etc.
+    title = re.sub(r'\s*[Cc][\.\s]?\d+(?:\.\d+)?\s*$', '', title)
+    title = re.sub(r'\s*[Cc]hapter\s*\d+(?:\.\d+)?\s*$', '', title)
+    title = re.sub(r'\s*\(?\d+(?:\.\d+)?\)?\s*$', '', title)
+    title = re.sub(r'\s+', ' ', title)
+    return title.strip() or "Unknown"
 
 
 db = None
@@ -67,7 +80,7 @@ def handle_new_entry(entry):
             save_chapter(
                 db,
                 url=final_url,
-                series=getattr(entry, "title", "unknown"),
+                series=clean_series_name(getattr(entry, "title", "unknown")),
                 chapter_label=getattr(entry, "summary", ""),
                 title=result.title or "Untitled",
                 text=result.text,

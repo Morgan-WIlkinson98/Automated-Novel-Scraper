@@ -4,7 +4,17 @@
 {% block content %}
     <div class="card">
         <h2>📖 {{ series_name }}</h2>
-        <p>{{ chapters|length }} chapters</p>
+        <p>{{ chapters|length }} chapters · {{ total_words }} words</p>
+    </div>
+    
+    <div class="card">
+        <h3>Series Info</h3>
+        <p><strong>Synopsis:</strong> <em>Synopsis not available in the local database.</em></p>
+        <p><strong>Extraction methods:</strong>
+            {% for method, count in method_counts.items() %}
+                {{ method }} ({{ count }}){% if not loop.last %}, {% endif %}
+            {% endfor %}
+        </p>
     </div>
     
     <div class="card">

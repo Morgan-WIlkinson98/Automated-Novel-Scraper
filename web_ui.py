@@ -56,7 +56,7 @@ def series_list():
 
 @app.route('/series/<series_name>')
 def series_detail(series_name):
-    """View chapters for a specific series."""
+    """View chapters and details for a specific series."""
     try:
         conn = get_db_connection()
         cursor = conn.execute("""
@@ -66,9 +66,22 @@ def series_detail(series_name):
             ORDER BY fetched_at
         """, (series_name,))
         chapters = [dict(row) for row in cursor]
+        
+        # Aggregate stats for the series info section
+        total_words = sum(len(str(c['text'] or '').split()) for c in chapters)
+        method_counts = {}
+        for c in chapters:
+            method_counts[c['extraction_method']] = method_counts.get(c['extraction_method'], 0) + 1
+        
         conn.close()
         
-        return render_template('series_detail.html', series_name=series_name, chapters=chapters)
+        return render_template(
+            'series_detail.html',
+            series_name=series_name,
+            chapters=chapters,
+            total_words=total_words,
+            method_counts=method_counts,
+        )
     except Exception as e:
         logger.error(f"Error viewing series {series_name}: {e}")
         return render_template('error.html', error=str(e)), 500
