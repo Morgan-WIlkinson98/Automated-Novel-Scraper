@@ -7,6 +7,9 @@ Depends on: flask
 
 import logging
 import sqlite3
+import json
+import os
+import signal
 from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
 from export import get_statistics, get_series_list, export_all_to_epub, export_series_to_epub
@@ -279,6 +282,38 @@ def setup_app():
     """Ensure required directories exist."""
     Path("templates").mkdir(exist_ok=True)
     get_settings().EXPORT_DIR and Path(get_settings().EXPORT_DIR).mkdir(exist_ok=True)
+
+
+@app.route('/api/stop', methods=['POST'])
+def api_stop():
+    """Stop the scraper and web UI processes."""
+    try:
+        pid_file = Path("pids.json")
+        if not pid_file.exists():
+            return jsonify({'success': False, 'error': 'PID file not found. Run python3 start.py to start the app.'}), 400
+        
+        with open(pid_file) as f:
+            pids = json.load(f)
+        
+        # Stop child processes first (scraper, then web UI)
+        for key in ['scraper', 'web_ui', 'start']:
+            pid = pids.get(key)
+            if pid and pid != os.getpid():
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    logger.info(f"Sent SIGTERM to {key} (PID: {pid})")
+                except ProcessLookupError:
+                    logger.warning(f"Process {key} (PID: {pid}) already gone")
+                except Exception as e:
+                    logger.error(f"Failed to stop {key} (PID: {pid}): {e}")
+        
+        if pid_file.exists():
+            pid_file.unlink()
+        
+        return jsonify({'success': True, 'message': 'Stop signal sent. The app will shut down shortly.'})
+    except Exception as e:
+        logger.error(f"Error stopping app: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/logs')

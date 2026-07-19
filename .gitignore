@@ -43,6 +43,9 @@ ENV/
 # Configuration (contains credentials)
 config.py
 
+# Runtime PID file
+pids.json
+
 # Exports
 exports/
 

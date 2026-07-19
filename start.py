@@ -5,6 +5,7 @@ Single command to start both the scraper and the web UI.
 
 import os
 import sys
+import json
 import logging
 import subprocess
 import time
@@ -12,6 +13,19 @@ from pathlib import Path
 from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
+
+PID_FILE = Path("pids.json")
+
+
+def write_pids(pids: dict):
+    """Write process PIDs to a JSON file for external stop commands."""
+    PID_FILE.write_text(json.dumps(pids))
+
+
+def clear_pids():
+    """Remove PID file."""
+    if PID_FILE.exists():
+        PID_FILE.unlink()
 
 
 def start_process(script_name: str, env: dict = None):
@@ -47,12 +61,14 @@ def main():
     env = os.environ.copy()
     
     processes = []
+    pids = {"start": os.getpid()}
     
     try:
         # Start web UI first
         logger.info("Starting web UI on http://localhost:6110")
         web_ui = start_process("web_ui.py", env)
         processes.append(("WEB-UI", web_ui))
+        pids["web_ui"] = web_ui.pid
         
         # Give web UI a moment to initialize
         time.sleep(2)
@@ -61,6 +77,9 @@ def main():
         logger.info("Starting scraper")
         scraper = start_process("main.py", env)
         processes.append(("SCRAPER", scraper))
+        pids["scraper"] = scraper.pid
+        
+        write_pids(pids)
         
         logger.info("All services started. Press Ctrl+C to stop.")
         
@@ -88,6 +107,7 @@ def main():
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+        clear_pids()
         logger.info("All services stopped")
 
 
