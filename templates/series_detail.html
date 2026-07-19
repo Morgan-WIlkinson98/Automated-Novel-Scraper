@@ -1,0 +1,82 @@
+
+{% extends "base.html" %}
+{% block title %}{{ series_name }} - Novel Scraper{% endblock %}
+{% block content %}
+    <div class="card">
+        <h2>📖 {{ series_name }}</h2>
+        <p>{{ chapters|length }} chapters</p>
+    </div>
+    
+    <div class="card">
+        <h3>Chapters</h3>
+        <div style="margin-bottom: 15px;">
+            <button onclick="toggleSelectAll()" class="btn" style="margin-right: 10px;">Toggle Select All</button>
+            <button onclick="downloadSelected()" class="btn" style="margin-right: 10px;">📦 Download Selected</button>
+            <button onclick="downloadAll()" class="btn btn-success">📦 Download All</button>
+        </div>
+        <table style="margin-top: 20px;">
+            <tr>
+                <th>Select</th>
+                <th>Chapter</th>
+                <th>Title</th>
+                <th>Method</th>
+                <th>Date</th>
+                <th>Action</th>
+            </tr>
+            {% for chapter in chapters %}
+            <tr>
+                <td><input type="checkbox" class="chapter-checkbox" value="{{ chapter.url }}" style="transform: scale(1.2);"></td>
+                <td>{{ chapter.chapter_label }}</td>
+                <td>{{ chapter.title }}</td>
+                <td>{{ chapter.extraction_method }}</td>
+                <td>{{ chapter.fetched_at|round|int }}</td>
+                <td>
+                    <a href="/chapter/{{ chapter.url }}" class="btn">Read</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+        <div id="export-status" style="margin-top: 15px;"></div>
+    </div>
+    
+    <script>
+        function getSelectedUrls() {
+            return Array.from(document.querySelectorAll('.chapter-checkbox:checked')).map(cb => cb.value);
+        }
+        
+        function toggleSelectAll() {
+            const checkboxes = document.querySelectorAll('.chapter-checkbox');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            checkboxes.forEach(cb => cb.checked = !allChecked);
+        }
+        
+        async function exportChapters(chapterUrls) {
+            const response = await fetch('/api/export/series/' + encodeURIComponent('{{ series_name|e }}') + '/chapters', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chapter_urls: chapterUrls })
+            });
+            const data = await response.json();
+            const statusEl = document.getElementById('export-status');
+            if (data.success) {
+                statusEl.innerHTML = '<div class="alert alert-success">Download ready: <a href="/download/' + encodeURIComponent(data.file) + '" download>Click here</a></div>';
+            } else {
+                statusEl.innerHTML = '<div class="alert alert-error">Error: ' + (data.error || 'Unknown error') + '</div>';
+            }
+        }
+        
+        async function downloadSelected() {
+            const urls = getSelectedUrls();
+            if (urls.length === 0) {
+                alert('Please select at least one chapter.');
+                return;
+            }
+            await exportChapters(urls);
+        }
+        
+        async function downloadAll() {
+            await exportChapters([]);
+        }
+    </script>
+{% endblock %}
+    

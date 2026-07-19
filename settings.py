@@ -30,7 +30,9 @@ class Settings:
         'MIN_PARAGRAPHS': 3,
         'SEEN_ENTRIES_DB': 'seen_entries.db',
         'CHAPTERS_DB': 'chapters.db',
-        'EXPORT_DIR': 'exports',
+        'EXPORT_DIR': None,
+        'EXPORT_DIR_MAC': '/Users/morganwilkinson/Novel Exports',
+        'EXPORT_DIR_WINDOWS': r'C:\Users\%USERNAME%\Novel Exports',
     }
     
     @classmethod
@@ -48,6 +50,13 @@ class Settings:
         
         # Override from environment variables
         settings._load_from_env()
+        
+        # Resolve active export dir from OS-specific default if not explicitly set
+        if getattr(settings, 'EXPORT_DIR', None) is None:
+            if os.name == 'nt':
+                settings.EXPORT_DIR = os.path.expandvars(settings.EXPORT_DIR_WINDOWS)
+            else:
+                settings.EXPORT_DIR = settings.EXPORT_DIR_MAC
         
         return settings
     
@@ -130,7 +139,8 @@ class Settings:
         if value is None:
             lines.append(f'{key} = None')
         elif isinstance(value, str):
-            lines.append(f'{key} = "{value}"')
+            # Use repr() to safely escape backslashes and quotes in paths
+            lines.append(f'{key} = {repr(value)}')
         elif isinstance(value, (dict, list)):
             import json
             lines.append(f'{key} = {json.dumps(value, indent=4)}')
@@ -154,7 +164,9 @@ class Settings:
             'EXTRA_HTTP_HEADERS': 'Additional HTTP headers for Cloudflare bypass (optional)',
             'SEEN_ENTRIES_DB': 'Database path for seen entries',
             'CHAPTERS_DB': 'Database path for chapters',
-            'EXPORT_DIR': 'Export directory for EPUB files',
+            'EXPORT_DIR': 'Active export directory for EPUB files (auto-resolved if empty)',
+            'EXPORT_DIR_MAC': 'Default export directory on macOS',
+            'EXPORT_DIR_WINDOWS': 'Default export directory on Windows (%USERNAME% expands to current user)',
         }
         return comments.get(key)
     

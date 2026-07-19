@@ -1,0 +1,71 @@
+
+{% extends "base.html" %}
+{% block title %}Export - Novel Scraper{% endblock %}
+{% block content %}
+    <div class="card">
+        <h2>📦 Export to EPUB</h2>
+        <p>Export your chapters to EPUB format for reading on e-readers.</p>
+    </div>
+    
+    <div class="card">
+        <h3>Export All Series</h3>
+        <p>Export all series to individual EPUB files.</p>
+        <button onclick="exportAll()" class="btn btn-success">Export All</button>
+    </div>
+    
+    <div class="card">
+        <h3>Export Specific Series</h3>
+        <table style="margin-top: 20px;">
+            <tr>
+                <th>Series</th>
+                <th>Action</th>
+            </tr>
+            {% for s in series %}
+            <tr>
+                <td>{{ s }}</td>
+                <td>
+                    <button onclick="exportSeries('{{ s }}')" class="btn">Export</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+    
+    <div id="status"></div>
+    
+    <script>
+        function downloadLink(relativePath) {
+            return '<a href="/download/' + encodeURIComponent(relativePath) + '" download>' + relativePath + '</a>';
+        }
+        
+        function exportAll() {
+            fetch('/export/all', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        const links = (data.files || []).map(downloadLink).join('<br>');
+                        document.getElementById('status').innerHTML = 
+                            '<div class="alert alert-success">Exported ' + data.files.length + ' files:<br>' + links + '</div>';
+                    } else {
+                        document.getElementById('status').innerHTML = 
+                            '<div class="alert alert-error">Error: ' + data.error + '</div>';
+                    }
+                });
+        }
+        
+        function exportSeries(name) {
+            fetch('/export/series/' + encodeURIComponent(name), { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('status').innerHTML = 
+                            '<div class="alert alert-success">Exported: ' + name + '<br>' + downloadLink(data.file) + '</div>';
+                    } else {
+                        document.getElementById('status').innerHTML = 
+                            '<div class="alert alert-error">Error: ' + data.error + '</div>';
+                    }
+                });
+        }
+    </script>
+{% endblock %}
+    

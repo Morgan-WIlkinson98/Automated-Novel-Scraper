@@ -1,0 +1,165 @@
+
+{% extends "base.html" %}
+{% block title %}Settings - Novel Scraper{% endblock %}
+{% block content %}
+    <div class="card">
+        <h2>⚙️ Settings</h2>
+        <p>Configure authentication, polling, and quality thresholds.</p>
+    </div>
+    
+    <div class="card">
+        <h3>🔐 Authentication</h3>
+        <form id="authForm" style="margin-top: 20px;">
+            <div style="margin-bottom: 15px;">
+                <label for="curl_command"><strong>Paste curl Command (optional):</strong></label><br>
+                <textarea id="curl_command" name="curl_command" style="width: 100%; padding: 8px; margin-top: 5px;" rows="5" placeholder="Paste a curl command copied from your browser. It will auto-fill RSS URL, user-agent, cookies, and auth details."></textarea>
+                <small style="color: #666;">When provided, this overrides the fields below.</small>
+            </div>
+            <hr style="margin: 20px 0;">
+            <div style="margin-bottom: 15px;">
+                <label for="rss_url"><strong>RSS Feed URL:</strong></label><br>
+                <input type="text" id="rss_url" name="rss_url" value="{{ config.RSS_FEED_URL }}" style="width: 100%; padding: 8px; margin-top: 5px;" placeholder="https://www.novelupdates.com/rss/">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="username"><strong>NovelUpdates Username:</strong></label><br>
+                <input type="text" id="username" name="username" value="{{ config.NOVELUPDATES_USERNAME }}" style="width: 100%; padding: 8px; margin-top: 5px;" placeholder="your_username">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="password"><strong>NovelUpdates Password:</strong></label><br>
+                <input type="password" id="password" name="password" value="{{ config.NOVELUPDATES_PASSWORD }}" style="width: 100%; padding: 8px; margin-top: 5px;" placeholder="••••••••">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="cookies"><strong>Session Cookies (optional):</strong></label><br>
+                <textarea id="cookies" name="cookies" style="width: 100%; padding: 8px; margin-top: 5px;" rows="3" placeholder='{"session_id": "your_cookie"}'></textarea>
+            </div>
+        </form>
+    </div>
+    
+    <div class="card">
+        <h3>📁 Export & Output</h3>
+        <form id="exportForm" style="margin-top: 20px;">
+            <div style="margin-bottom: 15px;">
+                <label for="export_dir"><strong>Active Export Directory:</strong></label><br>
+                <input type="text" id="export_dir" name="export_dir" value="{{ config.EXPORT_DIR }}" style="width: 100%; padding: 8px; margin-top: 5px;" placeholder="Leave blank to use OS default">
+                <small style="color: #666;">Leave blank to use the default for your OS. Series EPUBs are saved inside subfolders named after each series.</small>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="export_dir_mac"><strong>Default Export Directory (macOS):</strong></label><br>
+                <input type="text" id="export_dir_mac" name="export_dir_mac" value="{{ config.EXPORT_DIR_MAC }}" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="export_dir_windows"><strong>Default Export Directory (Windows):</strong></label><br>
+                <input type="text" id="export_dir_windows" name="export_dir_windows" value="{{ config.EXPORT_DIR_WINDOWS }}" style="width: 100%; padding: 8px; margin-top: 5px;">
+                <small style="color: #666;">Use %USERNAME% to refer to the current Windows user.</small>
+            </div>
+        </form>
+    </div>
+    
+    <div class="card">
+        <h3>⏱️ Polling & Delays</h3>
+        <form id="settingsForm" style="margin-top: 20px;">
+            <div style="margin-bottom: 15px;">
+                <label for="poll_interval"><strong>Poll Interval (seconds):</strong></label><br>
+                <input type="number" id="poll_interval" name="poll_interval" value="{{ config.POLL_INTERVAL_SECONDS }}" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="min_delay"><strong>Minimum Request Delay (seconds):</strong></label><br>
+                <input type="number" id="min_delay" name="min_delay" value="{{ config.MIN_DELAY_SECONDS }}" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+        </form>
+    </div>
+    
+    <div class="card">
+        <h3>📏 Quality Thresholds</h3>
+        <form id="qualityForm" style="margin-top: 20px;">
+            <div style="margin-bottom: 15px;">
+                <label for="min_chars"><strong>Minimum Characters:</strong></label><br>
+                <input type="number" id="min_chars" name="min_chars" value="{{ config.MIN_CHARS }}" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="min_paragraphs"><strong>Minimum Paragraphs:</strong></label><br>
+                <input type="number" id="min_paragraphs" name="min_paragraphs" value="{{ config.MIN_PARAGRAPHS }}" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+        </form>
+    </div>
+    
+    <div class="card">
+        <button onclick="saveConfig()" class="btn btn-success" style="margin-right: 10px;">💾 Save Settings</button>
+        <button onclick="testAuth()" class="btn">🧪 Test Authentication</button>
+    </div>
+    
+    <div id="status"></div>
+    
+    <script>
+        var rawCookies = {{ config.NOVELUPDATES_COOKIES|tojson }};
+        document.getElementById('cookies').value = rawCookies ? JSON.stringify(rawCookies, null, 2) : '';
+        
+        function parseCookies(value) {
+            if (!value.trim()) return null;
+            try {
+                return JSON.parse(value);
+            } catch (e) {
+                // If it's not valid JSON, treat it as a curl -b string and parse manually
+                var cookies = {};
+                value.split(';').forEach(function(item) {
+                    item = item.trim();
+                    if (!item) return;
+                    var eq = item.indexOf('=');
+                    if (eq > 0) {
+                        cookies[item.substring(0, eq).trim()] = item.substring(eq + 1).trim();
+                    }
+                });
+                return Object.keys(cookies).length ? cookies : null;
+            }
+        }
+        
+        function getFormData() {
+            return {
+                curl_command: document.getElementById('curl_command').value,
+                RSS_FEED_URL: document.getElementById('rss_url').value,
+                NOVELUPDATES_USERNAME: document.getElementById('username').value,
+                NOVELUPDATES_PASSWORD: document.getElementById('password').value,
+                NOVELUPDATES_COOKIES: parseCookies(document.getElementById('cookies').value),
+                EXPORT_DIR: document.getElementById('export_dir').value.trim() || null,
+                EXPORT_DIR_MAC: document.getElementById('export_dir_mac').value,
+                EXPORT_DIR_WINDOWS: document.getElementById('export_dir_windows').value,
+                POLL_INTERVAL_SECONDS: parseInt(document.getElementById('poll_interval').value),
+                MIN_DELAY_SECONDS: parseInt(document.getElementById('min_delay').value),
+                MIN_CHARS: parseInt(document.getElementById('min_chars').value),
+                MIN_PARAGRAPHS: parseInt(document.getElementById('min_paragraphs').value)
+            };
+        }
+        
+        function saveConfig() {
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(getFormData())
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('status').innerHTML = '<div class="alert alert-success">✅ Settings saved successfully!</div>';
+                } else {
+                    document.getElementById('status').innerHTML = '<div class="alert alert-error">❌ Error: ' + data.error + '</div>';
+                }
+            });
+        }
+        
+        function testAuth() {
+            document.getElementById('status').innerHTML = '<div class="alert alert-success">🧪 Testing authentication, please wait...</div>';
+            fetch('/api/test-auth', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('status').innerHTML = '<div class="alert alert-success">✅ Authentication successful!<br>' +
+                        'Feed title: ' + data.feed_title + '<br>' +
+                        'Entries: ' + data.entry_count + '</div>';
+                } else {
+                    document.getElementById('status').innerHTML = '<div class="alert alert-error">❌ Authentication failed: ' + data.error + '</div>';
+                }
+            });
+        }
+    </script>
+{% endblock %}
+    

@@ -1,0 +1,23 @@
+
+{% extends "base.html" %}
+{% block title %}Series - Novel Scraper{% endblock %}
+{% block content %}
+    <div class="card">
+        <h2>📚 All Series ({{ series|length }})</h2>
+        <table style="margin-top: 20px;">
+            <tr>
+                <th>Series Name</th>
+                <th>Action</th>
+            </tr>
+            {% for s in series %}
+            <tr>
+                <td><a href="/series/{{ s|urlencode }}">{{ s }}</a></td>
+                <td>
+                    <a href="/series/{{ s|urlencode }}" class="btn">View Details</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+{% endblock %}
+    

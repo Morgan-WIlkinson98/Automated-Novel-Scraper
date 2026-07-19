@@ -48,7 +48,4 @@ pids.json
 
 # Exports
 exports/
-
-# Templates (auto-generated)
-templates/
 scraper_pid.json

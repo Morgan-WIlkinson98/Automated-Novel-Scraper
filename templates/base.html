@@ -1,0 +1,105 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Novel Scraper{% endblock %}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { background: #2c3e50; color: white; padding: 20px 0; margin-bottom: 30px; }
+        .header h1 { margin: 0; }
+        .nav { background: #34495e; padding: 10px 0; }
+        .nav a { color: white; text-decoration: none; margin-right: 20px; padding: 5px 10px; }
+        .nav a:hover { background: #455a64; }
+        .nav a.active { background: #1abc9c; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+        .stat-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; }
+        .stat-card h3 { font-size: 2em; margin-bottom: 5px; }
+        .stat-card p { opacity: 0.9; }
+        .btn { background: #3498db; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; text-decoration: none; }
+        .btn:hover { background: #2980b9; }
+        .btn-success { background: #27ae60; }
+        .btn-success:hover { background: #219150; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background: #f8f9fa; }
+        tr:hover { background: #f5f5f5; }
+        .chapter-text { line-height: 1.8; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .alert { padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+        .alert-error { background: #e74c3c; color: white; }
+        .alert-success { background: #27ae60; color: white; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <h1>📚 Novel Scraper</h1>
+            <div class="controls" style="display: flex; align-items: center; gap: 10px;">
+                <span id="scraper-status" style="font-size: 0.9em; opacity: 0.8;">Status: checking...</span>
+                <button id="start-btn" class="btn btn-success" onclick="startScraper()" style="padding: 8px 16px; font-size: 0.9em;">▶ Start</button>
+                <button id="stop-btn" class="btn" onclick="stopScraper()" style="background: #e74c3c; padding: 8px 16px; font-size: 0.9em;">⏹ Stop</button>
+            </div>
+        </div>
+    </div>
+    <div class="nav">
+        <div class="container">
+            <a href="/" class="{% if request.endpoint == 'index' %}active{% endif %}">Dashboard</a>
+            <a href="/series" class="{% if request.endpoint == 'series_list' %}active{% endif %}">Series</a>
+            <a href="/export" class="{% if request.endpoint == 'export_page' %}active{% endif %}">Export</a>
+            <a href="/logs" class="{% if request.endpoint == 'logs_page' %}active{% endif %}">Logs</a>
+            <a href="/settings" class="{% if request.endpoint == 'settings_page' %}active{% endif %}">Settings</a>
+        </div>
+    </div>
+    <script>
+        async function startScraper() {
+            try {
+                const response = await fetch('/api/start_scraper', { method: 'POST' });
+                const data = await response.json();
+                alert(data.success ? 'Scraper started' : 'Failed to start: ' + (data.error || 'Unknown'));
+                updateStatus();
+            } catch (e) {
+                alert('Start request failed: ' + e);
+            }
+        }
+        
+        async function stopScraper() {
+            if (!confirm('Stop the scraper?')) return;
+            try {
+                const response = await fetch('/api/stop_scraper', { method: 'POST' });
+                const data = await response.json();
+                alert(data.success ? 'Scraper stopped' : 'Failed to stop: ' + (data.error || 'Unknown'));
+                updateStatus();
+            } catch (e) {
+                alert('Stop request failed: ' + e);
+            }
+        }
+        
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/scraper_status');
+                const data = await response.json();
+                const statusEl = document.getElementById('scraper-status');
+                const startBtn = document.getElementById('start-btn');
+                const stopBtn = document.getElementById('stop-btn');
+                statusEl.textContent = 'Status: ' + (data.running ? 'running' : 'stopped');
+                startBtn.disabled = data.running;
+                stopBtn.disabled = !data.running;
+            } catch (e) {
+                console.error('Status check failed:', e);
+            }
+        }
+        
+        // Refresh status every 5 seconds
+        setInterval(updateStatus, 5000);
+        document.addEventListener('DOMContentLoaded', updateStatus);
+    </script>
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>
+    

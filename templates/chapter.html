@@ -1,0 +1,20 @@
+
+{% extends "base.html" %}
+{% block title %}{{ chapter.title }} - Novel Scraper{% endblock %}
+{% block content %}
+    <div class="card">
+        <p><a href="/series/{{ chapter.series }}">← Back to {{ chapter.series }}</a></p>
+        <h1>{{ chapter.title }}</h1>
+        <p><strong>{{ chapter.chapter_label }}</strong></p>
+        <p><small>Extracted via: {{ chapter.extraction_method }}</small></p>
+    </div>
+    
+    <div class="card">
+        <div class="chapter-text">
+            {{ chapter.text|replace('
+
+', '<br><br>')|safe }}
+        </div>
+    </div>
+{% endblock %}
+    
