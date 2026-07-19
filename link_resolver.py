@@ -82,14 +82,17 @@ def resolve_final_url(url: str, timeout: int = 15) -> str:
 
 def resolve_final_url_with_browser_fallback(url: str, timeout: int = 15, use_browser: bool = True) -> str:
     """
-    Try to resolve URL with HTTP first, fall back to browser automation
-    for Cloudflare-protected NovelUpdates extnu links.
+    Resolve a URL. NovelUpdates extnu links go straight to browser automation
+    because direct HTTP requests consistently return 403 Cloudflare pages.
     """
+    if use_browser and _is_novelupdates_extnu(url):
+        logger.debug(f"NovelUpdates extnu link, using browser directly: {url}")
+        return resolve_with_browser(url, timeout=45)
+    
     try:
         return resolve_final_url(url, timeout)
     except HTTPError as e:
-        if use_browser and _is_novelupdates_extnu(url):
-            from browser import resolve_with_browser
-            logger.warning(f"HTTP resolution failed for NovelUpdates link, trying browser: {url}")
+        if use_browser:
+            logger.debug(f"HTTP resolution failed, trying browser: {url}")
             return resolve_with_browser(url, timeout=45)
         raise
