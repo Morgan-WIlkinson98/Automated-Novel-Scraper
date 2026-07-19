@@ -34,9 +34,17 @@ def clean_series_name(title: str) -> str:
 
 db = None
 
+def get_db():
+    """Get or initialize the global chapters database connection."""
+    global db
+    if db is None:
+        db = init_storage(get_settings().CHAPTERS_DB)
+    return db
+
 def handle_new_entry(entry):
     """Process a new RSS entry through the complete pipeline."""
     try:
+        db = get_db()
         feed_link = entry.link
         if not feed_link:
             logger.warning("Entry has no link, skipping")

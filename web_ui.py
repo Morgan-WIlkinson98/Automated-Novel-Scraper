@@ -22,6 +22,8 @@ from settings import get_settings, reload_settings
 from exceptions import DatabaseError
 from logging_config import setup_logging as setup_app_logging, get_log_path
 from curl_parser import parse_curl_command
+from main import handle_new_entry
+from rss_watcher import init_db as init_seen_db, poll_once
 
 logger = logging.getLogger(__name__)
 
@@ -521,6 +523,27 @@ def _scraper_is_running() -> bool:
         return True
     except (OSError, ValueError, ProcessLookupError):
         return False
+
+
+@app.route('/api/fetch_rss', methods=['POST'])
+def api_fetch_rss():
+    """Manually trigger one RSS poll in the background."""
+    try:
+        import threading
+        
+        def _fetch():
+            conn = init_seen_db(get_settings().SEEN_ENTRIES_DB)
+            try:
+                poll_once(conn, handle_new_entry)
+            finally:
+                conn.close()
+        
+        thread = threading.Thread(target=_fetch, daemon=True)
+        thread.start()
+        return jsonify({'success': True, 'message': 'RSS fetch started. Check logs for progress.'})
+    except Exception as e:
+        logger.error(f"Fetch RSS failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/scraper_status')

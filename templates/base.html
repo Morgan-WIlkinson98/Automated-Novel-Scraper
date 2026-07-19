@@ -40,6 +40,7 @@
             <h1>📚 Novel Scraper</h1>
             <div class="controls" style="display: flex; align-items: center; gap: 10px;">
                 <span id="scraper-status" style="font-size: 0.9em; opacity: 0.8;">Status: checking...</span>
+                <button id="fetch-rss-btn" class="btn" onclick="fetchRss()" style="background: #9b59b6; padding: 8px 16px; font-size: 0.9em;">📡 Fetch RSS</button>
                 <button id="start-btn" class="btn btn-success" onclick="startScraper()" style="padding: 8px 16px; font-size: 0.9em;">▶ Start</button>
                 <button id="stop-btn" class="btn" onclick="stopScraper()" style="background: #e74c3c; padding: 8px 16px; font-size: 0.9em;">⏹ Stop</button>
             </div>
@@ -55,6 +56,16 @@
         </div>
     </div>
     <script>
+        async function fetchRss() {
+            try {
+                const response = await fetch('/api/fetch_rss', { method: 'POST' });
+                const data = await response.json();
+                alert(data.success ? 'RSS fetch started. Check logs for progress.' : 'Failed: ' + (data.error || 'Unknown'));
+            } catch (e) {
+                alert('Fetch RSS request failed: ' + e);
+            }
+        }
+        
         async function startScraper() {
             try {
                 const response = await fetch('/api/start_scraper', { method: 'POST' });
