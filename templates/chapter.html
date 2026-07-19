@@ -2,12 +2,31 @@
 {% extends "base.html" %}
 {% block title %}{{ chapter.title }} - Novel Scraper{% endblock %}
 {% block content %}
+    <div class="card" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <p style="margin: 0;"><a href="/series/{{ series_name }}">← Back to {{ series_name }}</a></p>
+        <div>
+            {% if prev_chapter %}
+            <button class="btn" data-extnu="{{ prev_chapter.extnu_url|e }}" data-url="{{ prev_chapter.downloaded_url|e }}" data-number="{{ prev_chapter.number or '?' }}" data-title="{{ prev_chapter.title|e }}" onclick="goToChapter(this)">← Back (Ch {{ prev_chapter.number or '?' }})</button>
+            {% endif %}
+            {% if next_chapter %}
+            <button class="btn" data-extnu="{{ next_chapter.extnu_url|e }}" data-url="{{ next_chapter.downloaded_url|e }}" data-number="{{ next_chapter.number or '?' }}" data-title="{{ next_chapter.title|e }}" onclick="goToChapter(this)">Next (Ch {{ next_chapter.number or '?' }}) →</button>
+            {% endif %}
+        </div>
+    </div>
+    
     <div class="card">
-        <p><a href="/series/{{ chapter.series }}">← Back to {{ chapter.series }}</a></p>
         <h1>{{ chapter.title }}</h1>
         <p><strong>{{ chapter.chapter_label }}</strong></p>
         <p><small>Extracted via: {{ chapter.extraction_method }}</small></p>
     </div>
+    
+    <div id="chapter-loader" class="card" style="display: none; text-align: center;">
+        <div style="border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 10px;"></div>
+        <p id="chapter-loader-text" style="margin: 0;">Downloading chapter...</p>
+    </div>
+    <style>
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
     
     <div class="card">
         <div class="chapter-text">
@@ -16,5 +35,80 @@
 ', '<br><br>')|safe }}
         </div>
     </div>
+    
+    <script type="application/json" id="chapter-series-data">
+{{ series_name | tojson }}
+    </script>
+    
+    <script>
+        const seriesName = JSON.parse(document.getElementById('chapter-series-data').textContent);
+        
+        function showLoader(text) {
+            document.getElementById('chapter-loader').style.display = 'block';
+            document.getElementById('chapter-loader-text').textContent = text || 'Downloading chapter...';
+        }
+        
+        function hideLoader() {
+            document.getElementById('chapter-loader').style.display = 'none';
+        }
+        
+        function pollDownloadStatus(jobId, extnuUrl) {
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/download_status/' + encodeURIComponent(jobId));
+                    const data = await response.json();
+                    if (data.error) {
+                        clearInterval(interval);
+                        hideLoader();
+                        alert('Download failed: ' + data.error);
+                        return;
+                    }
+                    const pct = data.total ? Math.round((data.done / data.total) * 100) : 0;
+                    document.getElementById('chapter-loader-text').textContent = `${data.message || 'Downloading...'} (${pct}%)`;
+                    if (data.completed) {
+                        clearInterval(interval);
+                        const finalUrl = data.chapter_urls && data.chapter_urls[extnuUrl];
+                        if (finalUrl) {
+                            window.location.href = '/chapter/' + encodeURIComponent(finalUrl);
+                        } else {
+                            window.location.reload();
+                        }
+                    }
+                } catch (e) {
+                    clearInterval(interval);
+                    hideLoader();
+                    alert('Error: ' + e);
+                }
+            }, 1500);
+        }
+        
+        async function goToChapter(btn) {
+            const extnu = btn.dataset.extnu;
+            const url = btn.dataset.url;
+            const number = btn.dataset.number;
+            if (url) {
+                window.location.href = '/chapter/' + encodeURIComponent(url);
+            } else {
+                showLoader(`Downloading chapter ${number}...`);
+                try {
+                    const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/download', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ urls: [extnu] })
+                    });
+                    const data = await response.json();
+                    if (data.success && data.job_id) {
+                        pollDownloadStatus(data.job_id, extnu);
+                    } else {
+                        hideLoader();
+                        alert('Error: ' + (data.error || 'Unknown'));
+                    }
+                } catch (e) {
+                    hideLoader();
+                    alert('Error: ' + e);
+                }
+            }
+        }
+    </script>
 {% endblock %}
     

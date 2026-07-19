@@ -172,7 +172,7 @@ def series_detail(series_name):
 
 @app.route('/chapter/<path:url>')
 def chapter_detail(url):
-    """View a specific chapter."""
+    """View a specific chapter with previous/next navigation."""
     try:
         conn = get_db_connection()
         cursor = conn.execute("""
@@ -181,12 +181,57 @@ def chapter_detail(url):
             WHERE url = ?
         """, (url,))
         chapter = cursor.fetchone()
-        conn.close()
         
         if not chapter:
+            conn.close()
             return render_template('error.html', error="Chapter not found"), 404
         
-        return render_template('chapter.html', chapter=dict(chapter))
+        series_name = chapter['series']
+        current_label = chapter['chapter_label'] or url
+        
+        # Determine previous/next chapters from the synced series list
+        series_info = get_series_info(conn, series_name)
+        available_chapters = []
+        if series_info and series_info.get('available_chapters'):
+            try:
+                available_chapters = json.loads(series_info['available_chapters'])
+            except json.JSONDecodeError:
+                available_chapters = []
+        
+        prev_chapter = None
+        next_chapter = None
+        if available_chapters:
+            # Find current chapter in available list by extnu label
+            current_index = next((i for i, ch in enumerate(available_chapters)
+                                  if ch.get('extnu_url') == current_label), None)
+            if current_index is not None:
+                if current_index > 0:
+                    prev_chapter = available_chapters[current_index - 1]
+                if current_index < len(available_chapters) - 1:
+                    next_chapter = available_chapters[current_index + 1]
+        
+        # Map available extnu URLs to already-downloaded chapter URLs
+        cursor = conn.execute(
+            "SELECT chapter_label, url FROM chapters WHERE series = ? AND chapter_label LIKE 'https://www.novelupdates.com/extnu/%'",
+            (series_name,)
+        )
+        downloaded_chapters = {row['chapter_label']: row['url'] for row in cursor}
+        conn.close()
+        
+        # For each neighbor, determine if it's already downloaded
+        for neighbor in [prev_chapter, next_chapter]:
+            if neighbor:
+                extnu = neighbor.get('extnu_url')
+                neighbor['downloaded_url'] = downloaded_chapters.get(extnu)
+                neighbor['is_downloaded'] = bool(neighbor['downloaded_url'])
+        
+        return render_template(
+            'chapter.html',
+            chapter=dict(chapter),
+            series_name=series_name,
+            prev_chapter=prev_chapter,
+            next_chapter=next_chapter,
+        )
     except Exception as e:
         logger.error(f"Error viewing chapter {url}: {e}")
         return render_template('error.html', error=str(e)), 500
@@ -463,6 +508,7 @@ def download_series_chapters(series_name):
             'running': True,
             'completed': False,
             'error': None,
+            'chapter_urls': {},
         }
         
         # Process in background so the request returns quickly
@@ -551,6 +597,7 @@ def _process_chapter_downloads(series_name: str, chapters: list, job_id: str):
                 method=result.method,
             )
             _download_jobs[job_id]['done'] = idx
+            _download_jobs[job_id]['chapter_urls'][extnu_url] = final_url
             _download_jobs[job_id]['message'] = f'Downloaded {ch.get("number") or idx} ({idx}/{len(chapters)})'
             logger.info(f"Downloaded chapter {ch.get('number')} for {series_name}")
         except Exception as e:
