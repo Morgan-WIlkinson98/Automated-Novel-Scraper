@@ -37,6 +37,16 @@ novel_scraper/
 └── chapters.db             # Created at runtime (chapter storage)
 ```
 
+## Documentation
+
+For detailed documentation, see:
+
+- **[Architecture](docs/architecture.md)** - System architecture, component details, and design decisions
+- **[Development Guide](docs/development.md)** - Development setup, workflow, testing, and debugging
+- **[Deployment Guide](docs/deployment.md)** - Deployment instructions for various environments
+- **[API Documentation](docs/api.md)** - Complete API reference for all modules
+- **[Contributing](CONTRIBUTING.md)** - Contribution guidelines and coding standards
+
 ## Installation
 
 Install dependencies:
