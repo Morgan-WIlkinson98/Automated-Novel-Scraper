@@ -18,7 +18,7 @@ class Settings:
     
     # Default values
     DEFAULTS: Dict[str, Any] = {
-        'RSS_FEED_URL': 'https://www.novelupdates.com/rss/',
+        'RSS_FEED_URL': 'https://rssnovelupdates.com/rss.php?uid=19860&unq=57032833df889&type=0&lid=local',
         'NOVELUPDATES_USERNAME': None,
         'NOVELUPDATES_PASSWORD': None,
         'NOVELUPDATES_COOKIES': None,
