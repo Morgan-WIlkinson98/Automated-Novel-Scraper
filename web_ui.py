@@ -13,6 +13,7 @@ from export import get_statistics, get_series_list, export_all_to_epub, export_s
 from settings import get_settings, reload_settings
 from exceptions import DatabaseError
 from logging_config import setup_logging as setup_app_logging, get_log_path
+from curl_parser import parse_curl_command
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +205,16 @@ def api_save_config():
     """API endpoint to save configuration."""
     try:
         config_data = request.json
+        
+        # If a curl command is provided, parse it and merge extracted values
+        curl_command = config_data.pop('curl_command', '')
+        if curl_command and isinstance(curl_command, str):
+            logger.info("Parsing curl command from settings UI")
+            parsed = parse_curl_command(curl_command)
+            logger.info(f"Parsed from curl: {list(parsed.keys())}")
+            # Merged parsed values overwrite form values (curl is authoritative)
+            config_data.update(parsed)
+        
         settings = get_settings()
         success = settings.save_to_file(config_data)
         if success:
