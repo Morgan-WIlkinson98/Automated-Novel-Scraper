@@ -558,13 +558,13 @@ def api_download_status(job_id):
 def _process_chapter_downloads(series_name: str, chapters: list, job_id: str):
     """Resolve and extract a list of chapters in the background."""
     import sqlite3
-    from link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
-    from generic_extractor import extract_chapter
-    from site_overrides import extract_with_override
-    from politeness import polite_get
-    from storage import init_storage, save_chapter
-    from settings import get_settings
-    from exceptions import HTTPError, ValidationError
+    from scraping.link_resolver.link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
+    from scraping.generic_extractor.generic_extractor import extract_chapter
+    from scraping.site_overrides.site_overrides import extract_with_override
+    from scraping.politeness.politeness import polite_get
+    from data.storage.storage import init_storage, save_chapter
+    from core.settings.settings import get_settings
+    from core.exceptions.exceptions import HTTPError, ValidationError
     
     settings = get_settings()
     db = init_storage(settings.CHAPTERS_DB)
@@ -744,7 +744,7 @@ def setup_app():
     """Ensure required directories and database tables exist."""
     Path("templates").mkdir(exist_ok=True)
     get_settings().EXPORT_DIR and Path(get_settings().EXPORT_DIR).mkdir(exist_ok=True)
-    from storage import init_storage
+    from data.storage.storage import init_storage
     init_storage(get_settings().CHAPTERS_DB)
 
 
