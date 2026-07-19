@@ -27,6 +27,8 @@ def clean_series_name(title: str) -> str:
     """Remove trailing chapter labels like ' c226' from an RSS entry title."""
     if not title:
         return "Unknown"
+    # Strip trailing "part", "part 1", "part 1/2" labels first
+    title = re.sub(r'\s+[Pp]art(?:\s*\d+(?:\.\d+)?(?:\s*/\s*\d+)?)?\s*$', '', title)
     # Strip common trailing chapter patterns: c123, c 123, chapter 123, etc.
     title = re.sub(r'\s*[Cc][\.\s]?\d+(?:\.\d+)?\s*$', '', title)
     title = re.sub(r'\s*[Cc]hapter\s*\d+(?:\.\d+)?\s*$', '', title)
