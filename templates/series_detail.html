@@ -226,10 +226,34 @@
             }
         }
         
+        function pollSyncStatus(jobId, statusEl) {
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/sync_status/' + encodeURIComponent(jobId));
+                    const data = await response.json();
+                    statusEl.textContent = data.message || 'Syncing...';
+                    if (data.error) {
+                        clearInterval(interval);
+                        statusEl.textContent = 'Error: ' + data.error;
+                        return;
+                    }
+                    if (data.completed) {
+                        clearInterval(interval);
+                        statusEl.textContent = `Synced. ${data.chapters} chapters found.`;
+                        document.getElementById('synopsis-text').textContent = data.synopsis || 'Synopsis not available.';
+                        setTimeout(() => location.reload(), 1500);
+                    }
+                } catch (e) {
+                    clearInterval(interval);
+                    statusEl.textContent = 'Error: ' + e;
+                }
+            }, 1500);
+        }
+        
         async function syncSeries() {
             const statusEl = document.getElementById('sync-status');
             const url = document.getElementById('series-url').value.trim();
-            statusEl.textContent = 'Syncing...';
+            statusEl.textContent = 'Starting sync...';
             try {
                 const response = await fetch('/api/series/' + encodeURIComponent(seriesName) + '/sync', {
                     method: 'POST',
@@ -237,12 +261,10 @@
                     body: JSON.stringify(url ? { url } : {})
                 });
                 const data = await response.json();
-                if (data.success) {
-                    statusEl.textContent = `Synced. ${data.chapters} chapters found.`;
-                    document.getElementById('synopsis-text').textContent = data.synopsis || 'Synopsis not available.';
-                    setTimeout(() => location.reload(), 1000);
+                if (data.success && data.job_id) {
+                    pollSyncStatus(data.job_id, statusEl);
                 } else {
-                    statusEl.textContent = 'Error: ' + (data.error || 'Unknown');
+                    statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
                 }
             } catch (e) {
                 statusEl.textContent = 'Error: ' + e;

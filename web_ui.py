@@ -31,8 +31,9 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.secret_key = 'novel-scraper-secret-key-change-in-production'
 
-# In-memory progress tracking for background chapter downloads
+# In-memory progress tracking for background jobs
 _download_jobs = {}
+_sync_jobs = {}
 
 def get_db_connection():
     """Get database connection with row factory."""
@@ -322,7 +323,7 @@ def set_series_url(series_name):
 
 @app.route('/api/series/<series_name>/sync', methods=['POST'])
 def sync_series(series_name):
-    """Scrape the NovelUpdates series page for synopsis and chapter list."""
+    """Queue a background scrape of the NovelUpdates series page."""
     try:
         data = request.json or {}
         provided_url = data.get('url', '').strip()
@@ -355,26 +356,65 @@ def sync_series(series_name):
             save_series_info(conn, series_name, url=series_url)
             conn.close()
         
-        scraped = scrape_series_page(series_url)
+        job_id = str(uuid.uuid4())
+        _sync_jobs[job_id] = {
+            'running': True,
+            'completed': False,
+            'error': None,
+            'message': 'Starting sync...',
+            'chapters': 0,
+            'synopsis': '',
+        }
         
-        conn = get_db_connection()
-        save_series_info(
-            conn,
-            series_name,
-            url=series_url,
-            synopsis=scraped['synopsis'],
-            available_chapters=json.dumps(scraped['chapters'])
-        )
-        conn.close()
+        def _run_sync():
+            try:
+                _sync_jobs[job_id]['message'] = 'Scraping series page (this may take a minute)...'
+                scraped = scrape_series_page(series_url)
+                conn = get_db_connection()
+                save_series_info(
+                    conn,
+                    series_name,
+                    url=series_url,
+                    synopsis=scraped['synopsis'],
+                    available_chapters=json.dumps(scraped['chapters'])
+                )
+                conn.close()
+                _sync_jobs[job_id].update({
+                    'running': False,
+                    'completed': True,
+                    'message': f'Found {len(scraped["chapters"])} chapters',
+                    'chapters': len(scraped['chapters']),
+                    'synopsis': scraped['synopsis'][:500] if scraped['synopsis'] else '',
+                })
+            except Exception as e:
+                logger.error(f"Sync series {series_name} failed: {e}")
+                _sync_jobs[job_id].update({'running': False, 'completed': True, 'error': str(e), 'message': f'Error: {e}'})
+        
+        import threading
+        thread = threading.Thread(target=_run_sync, daemon=True)
+        thread.start()
         
         return jsonify({
             'success': True,
-            'chapters': len(scraped['chapters']),
-            'synopsis': scraped['synopsis'][:500] if scraped['synopsis'] else ''
+            'message': 'Sync started.',
+            'job_id': job_id
         })
     except Exception as e:
         logger.error(f"Sync series {series_name} failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/sync_status/<job_id>')
+def api_sync_status(job_id):
+    """Return the current state of a background series sync job."""
+    return jsonify(_sync_jobs.get(job_id, {
+        'running': False,
+        'completed': False,
+        'error': 'Job not found',
+        'message': 'Job not found',
+        'chapters': 0,
+        'synopsis': '',
+    }))
 
 
 @app.route('/api/series/<series_name>/download', methods=['POST'])
@@ -792,12 +832,13 @@ def api_logs():
         with open(log_path, 'r', encoding='utf-8') as f:
             all_lines = f.readlines()
         
-        # Category filtering based on logger name
+        # Category filtering based on logger name or log level
         keywords = {
             'rss': ['rss_watcher'],
             'auth': ['auth', 'Authentication', 'NOVELUPDATES_USERNAME'],
             'extract': ['generic_extractor', 'site_overrides', 'link_resolver', 'politeness'],
             'download': ['storage', 'export', 'Saved chapter', 'Created EPUB'],
+            'error': [' - ERROR -', ' - CRITICAL -', ' - WARNING -', 'Traceback'],
         }
         
         for line in all_lines:
