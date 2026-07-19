@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
 from export import get_statistics, get_series_list, export_all_to_epub, export_series_to_epub, export_selected_chapters_to_epub
