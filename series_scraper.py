@@ -128,7 +128,7 @@ def _extract_synopsis(html: str) -> str:
     return ''
 
 
-def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 50) -> Dict:
+def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200) -> Dict:
     """Scrape a NovelUpdates series page for synopsis and all paginated chapters."""
     from browser import get_browser_page
     
