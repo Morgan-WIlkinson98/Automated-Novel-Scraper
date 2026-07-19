@@ -66,7 +66,7 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
 
 
 def save_series_info(conn, series: str, url: str = None, synopsis: str = None, available_chapters: str = None):
-    """Save or update metadata for a series."""
+    """Save or update metadata for a series. Only overwrites fields that are provided (non-None)."""
     try:
         if not series:
             raise ValidationError("Series name cannot be empty")
@@ -74,9 +74,9 @@ def save_series_info(conn, series: str, url: str = None, synopsis: str = None, a
             INSERT INTO series_info (series, url, synopsis, available_chapters, last_synced)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(series) DO UPDATE SET
-                url = excluded.url,
-                synopsis = excluded.synopsis,
-                available_chapters = excluded.available_chapters,
+                url = COALESCE(excluded.url, series_info.url),
+                synopsis = COALESCE(excluded.synopsis, series_info.synopsis),
+                available_chapters = COALESCE(excluded.available_chapters, series_info.available_chapters),
                 last_synced = excluded.last_synced
         """, (series, url, synopsis, available_chapters, time.time()))
         conn.commit()

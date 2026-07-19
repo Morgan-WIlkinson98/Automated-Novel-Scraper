@@ -17,18 +17,22 @@ from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
 from export import get_statistics, get_series_list, export_all_to_epub, export_series_to_epub, export_selected_chapters_to_epub
 from storage import get_series_info, save_series_info
-from series_scraper import scrape_series_page, filter_chapters
+from series_scraper import scrape_series_page, filter_chapters, _extract_series_url_from_summary
 from settings import get_settings, reload_settings
 from exceptions import DatabaseError
 from logging_config import setup_logging as setup_app_logging, get_log_path
 from curl_parser import parse_curl_command
-from main import handle_new_entry
+from main import handle_new_entry, clean_series_name
+import feedparser
 from rss_watcher import init_db as init_seen_db, poll_once
 
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = 'novel-scraper-secret-key-change-in-production'
+
+# In-memory progress tracking for background chapter downloads
+_download_jobs = {}
 
 def get_db_connection():
     """Get database connection with row factory."""
@@ -328,8 +332,28 @@ def sync_series(series_name):
         conn.close()
         
         series_url = provided_url or series_info.get('url')
+        
+        # If no URL is stored, try to recover it from the latest saved RSS feed
+        if not series_url:
+            rss_path = Path(get_settings().EXPORT_DIR).parent / "rss_feeds" / "latest.xml"
+            if rss_path.exists():
+                feed = feedparser.parse(str(rss_path))
+                for entry in feed.entries:
+                    entry_title = clean_series_name(getattr(entry, 'title', ''))
+                    if entry_title == series_name:
+                        found_url = _extract_series_url_from_summary(getattr(entry, 'summary', ''))
+                        if found_url:
+                            series_url = found_url
+                            break
+        
         if not series_url:
             return jsonify({'success': False, 'error': 'No series URL stored. Wait for an RSS entry or set the URL manually.'}), 400
+        
+        # Persist a manually-provided or backfilled URL without overwriting existing metadata
+        if provided_url or (series_url and not series_info.get('url')):
+            conn = get_db_connection()
+            save_series_info(conn, series_name, url=series_url)
+            conn.close()
         
         scraped = scrape_series_page(series_url)
         
@@ -379,24 +403,59 @@ def download_series_chapters(series_name):
         if not selected:
             return jsonify({'success': False, 'error': 'No chapters selected.'}), 404
         
+        # Initialize an in-memory job for live progress tracking
+        import uuid
+        job_id = str(uuid.uuid4())
+        _download_jobs[job_id] = {
+            'total': len(selected),
+            'done': 0,
+            'message': f'Started downloading {len(selected)} chapter(s)',
+            'running': True,
+            'completed': False,
+            'error': None,
+        }
+        
         # Process in background so the request returns quickly
         import threading
         def _download():
-            _process_chapter_downloads(series_name, selected)
+            try:
+                _process_chapter_downloads(series_name, selected, job_id)
+            except Exception as e:
+                _download_jobs[job_id]['error'] = str(e)
+                logger.error(f"Download job {job_id} failed: {e}")
+            finally:
+                _download_jobs[job_id]['running'] = False
+                _download_jobs[job_id]['completed'] = True
+                if not _download_jobs[job_id]['error']:
+                    _download_jobs[job_id]['message'] = f'Downloaded {_download_jobs[job_id]["done"]} chapter(s)'
         
         thread = threading.Thread(target=_download, daemon=True)
         thread.start()
         
         return jsonify({
             'success': True,
-            'message': f'Started downloading {len(selected)} chapter(s). Check logs for progress.'
+            'message': f'Started downloading {len(selected)} chapter(s)',
+            'job_id': job_id
         })
     except Exception as e:
         logger.error(f"Download series {series_name} failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-def _process_chapter_downloads(series_name: str, chapters: list):
+@app.route('/api/download_status/<job_id>')
+def api_download_status(job_id):
+    """Return the current state of a background chapter download job."""
+    return jsonify(_download_jobs.get(job_id, {
+        'total': 0,
+        'done': 0,
+        'message': 'Job not found',
+        'running': False,
+        'completed': False,
+        'error': 'Job not found',
+    }))
+
+
+def _process_chapter_downloads(series_name: str, chapters: list, job_id: str):
     """Resolve and extract a list of chapters in the background."""
     import sqlite3
     from link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
@@ -410,7 +469,9 @@ def _process_chapter_downloads(series_name: str, chapters: list):
     settings = get_settings()
     db = init_storage(settings.CHAPTERS_DB)
     
-    for ch in chapters:
+    _download_jobs[job_id]['total'] = len(chapters)
+    
+    for idx, ch in enumerate(chapters, 1):
         extnu_url = ch.get('extnu_url')
         if not extnu_url:
             continue
@@ -439,8 +500,11 @@ def _process_chapter_downloads(series_name: str, chapters: list):
                 text=result.text,
                 method=result.method,
             )
+            _download_jobs[job_id]['done'] = idx
+            _download_jobs[job_id]['message'] = f'Downloaded {ch.get("number") or idx} ({idx}/{len(chapters)})'
             logger.info(f"Downloaded chapter {ch.get('number')} for {series_name}")
         except Exception as e:
+            _download_jobs[job_id]['message'] = f'Error on chapter {ch.get("number")}: {e}'
             logger.error(f"Failed to download chapter {ch.get('number')} for {series_name}: {e}")
             continue
     

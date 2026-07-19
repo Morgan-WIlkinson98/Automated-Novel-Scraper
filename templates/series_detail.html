@@ -131,6 +131,35 @@
             checkboxes.forEach(cb => cb.checked = !allChecked);
         }
         
+        function pollDownloadStatus(jobId, statusEl) {
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/download_status/' + encodeURIComponent(jobId));
+                    const data = await response.json();
+                    const pct = data.total ? Math.round((data.done / data.total) * 100) : 0;
+                    statusEl.innerHTML = `
+                        <div style="width:200px;height:20px;background:#eee;border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px;">
+                            <div style="width:${pct}%;height:100%;background:#27ae60;transition:width 0.3s;"></div>
+                        </div>
+                        <span>${data.done || 0}/${data.total || 0} ${data.message || ''}</span>`;
+                    
+                    if (data.error) {
+                        clearInterval(interval);
+                        statusEl.textContent = 'Error: ' + data.error;
+                        return;
+                    }
+                    if (data.completed) {
+                        clearInterval(interval);
+                        statusEl.innerHTML = '<span style="color:#27ae60;">' + (data.message || 'Done') + '</span> — reloading...';
+                        setTimeout(() => location.reload(), 1500);
+                    }
+                } catch (e) {
+                    clearInterval(interval);
+                    statusEl.textContent = 'Error: ' + e;
+                }
+            }, 1500);
+        }
+        
         async function downloadChapter(extnuUrl) {
             const statusEl = document.getElementById('available-status');
             statusEl.textContent = 'Starting download...';
@@ -141,7 +170,11 @@
                     body: JSON.stringify({ urls: [extnuUrl] })
                 });
                 const data = await response.json();
-                statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                if (data.success && data.job_id) {
+                    pollDownloadStatus(data.job_id, statusEl);
+                } else {
+                    statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                }
             } catch (e) {
                 statusEl.textContent = 'Error: ' + e;
             }
@@ -162,7 +195,11 @@
                     body: JSON.stringify({ urls })
                 });
                 const data = await response.json();
-                statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                if (data.success && data.job_id) {
+                    pollDownloadStatus(data.job_id, statusEl);
+                } else {
+                    statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                }
             } catch (e) {
                 statusEl.textContent = 'Error: ' + e;
             }
@@ -228,7 +265,11 @@
                     body: JSON.stringify({ start, end })
                 });
                 const data = await response.json();
-                statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                if (data.success && data.job_id) {
+                    pollDownloadStatus(data.job_id, statusEl);
+                } else {
+                    statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                }
             } catch (e) {
                 statusEl.textContent = 'Error: ' + e;
             }
@@ -244,7 +285,11 @@
                     body: JSON.stringify({ start: null, end: null })
                 });
                 const data = await response.json();
-                statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                if (data.success && data.job_id) {
+                    pollDownloadStatus(data.job_id, statusEl);
+                } else {
+                    statusEl.textContent = data.success ? data.message : 'Error: ' + (data.error || 'Unknown');
+                }
             } catch (e) {
                 statusEl.textContent = 'Error: ' + e;
             }
