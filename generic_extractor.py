@@ -7,11 +7,15 @@ Depends on: trafilatura, readability-lxml, politeness
 """
 
 import re
+import logging
 import trafilatura
 from readability import Document
 from dataclasses import dataclass
 from typing import Optional
 from politeness import polite_get
+from exceptions import ExtractionError, QualityError, ValidationError
+
+logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 15
 
@@ -21,46 +25,66 @@ class ExtractionResult:
     url: str
     title: Optional[str]
     text: Optional[str]
-    method: str          # "trafilatura", "readability", or "failed"
+    method: str          # "trafilatura", "readability", "site_override", or "failed"
     char_count: int
     paragraph_count: int
     passed_quality_check: bool
+    error: Optional[str] = None  # Error message if extraction failed
 
 
 def fetch_html(url: str) -> Optional[str]:
     """Fetch raw HTML for a given URL using the politeness layer."""
+    if not url or not isinstance(url, str):
+        raise ValidationError(f"Invalid URL: {url}")
+
+    logger.debug(f"Fetching HTML from {url}")
     resp = polite_get(url, timeout=REQUEST_TIMEOUT)
     if resp is None:
+        logger.warning(f"Failed to fetch HTML from {url}")
         return None
     try:
         resp.raise_for_status()
-        return resp.text
+        html = resp.text
+        logger.debug(f"Successfully fetched {len(html)} characters from {url}")
+        return html
     except Exception as exc:
-        print(f"[fetch_html] failed for {url}: {exc}")
+        logger.error(f"[fetch_html] failed for {url}: {exc}")
         return None
 
 
 def _extract_with_trafilatura(html: str, url: str):
-    text = trafilatura.extract(
-        html,
-        url=url,
-        include_comments=False,
-        include_tables=False,
-        favor_recall=False,
-    )
-    metadata = trafilatura.extract_metadata(html)
-    title = metadata.title if metadata else None
-    return title, text
+    """Extract text using trafilatura library."""
+    try:
+        text = trafilatura.extract(
+            html,
+            url=url,
+            include_comments=False,
+            include_tables=False,
+            favor_recall=False,
+        )
+        metadata = trafilatura.extract_metadata(html)
+        title = metadata.title if metadata else None
+        logger.debug(f"Trafilatura extraction: title={title}, text_length={len(text) if text else 0}")
+        return title, text
+    except Exception as e:
+        logger.error(f"Trafilatura extraction failed for {url}: {e}")
+        return None, None
 
 
 def _extract_with_readability(html: str):
-    doc = Document(html)
-    title = doc.short_title()
-    # readability-lxml returns an HTML summary; strip tags for plain text
-    summary_html = doc.summary()
-    text = re.sub(r"<[^>]+>", "\n", summary_html)
-    text = re.sub(r"\n{2,}", "\n\n", text).strip()
-    return title, text
+    """Extract text using readability-lxml library."""
+    try:
+        doc = Document(html)
+        title = doc.short_title()
+        # readability-lxml returns an HTML summary; strip tags for plain text
+        summary_html = doc.summary()
+        text = re.sub(r"<[^>]+>", "\n", summary_html)
+        text = re.sub(r"\n{2,}", "\n\n", text).strip()
+        logger.debug(f"Readability extraction: title={title}, text_length={len(text) if text else 0}")
+        return title, text
+    except Exception as e:
+        logger.error(f"Readability extraction failed: {e}")
+        return None, None
 
 
 def clean_text(text: str) -> str:
@@ -86,15 +110,20 @@ def clean_text(text: str) -> str:
             continue
         kept.append(ln)
 
-    return "\n\n".join(kept)
+    cleaned = "\n\n".join(kept)
+    logger.debug(f"Cleaned text: {len(text)} -> {len(cleaned)} characters")
+    return cleaned
 
 
 def quality_check(text: str, min_chars: int = 500, min_paragraphs: int = 3) -> bool:
+    """Validate extracted content quality."""
     if not text:
         return False
     char_count = len(text)
     paragraph_count = len([p for p in text.split("\n\n") if p.strip()])
-    return char_count >= min_chars and paragraph_count >= min_paragraphs
+    passed = char_count >= min_chars and paragraph_count >= min_paragraphs
+    logger.debug(f"Quality check: chars={char_count}, paragraphs={paragraph_count}, passed={passed}")
+    return passed
 
 
 def extract_chapter(url: str) -> ExtractionResult:
@@ -105,37 +134,57 @@ def extract_chapter(url: str) -> ExtractionResult:
     so the caller can decide whether to hand off to a site override.
     Uses the politeness layer for all HTTP requests.
     """
-    html = fetch_html(url)
-    if not html:
-        return ExtractionResult(url, None, None, "failed", 0, 0, False)
+    if not url or not isinstance(url, str):
+        return ExtractionResult(url, None, None, "failed", 0, 0, False, "Invalid URL")
 
-    title, text = _extract_with_trafilatura(html, url)
-    method = "trafilatura"
+    logger.info(f"Starting extraction for {url}")
 
-    if not quality_check(text):
-        alt_title, alt_text = _extract_with_readability(html)
-        if quality_check(alt_text) and (not text or len(alt_text) > len(text)):
-            title, text, method = alt_title, alt_text, "readability"
+    try:
+        html = fetch_html(url)
+        if not html:
+            return ExtractionResult(url, None, None, "failed", 0, 0, False, "Failed to fetch HTML")
 
-    text = clean_text(text) if text else text
-    passed = quality_check(text)
-    char_count = len(text) if text else 0
-    paragraph_count = len([p for p in text.split("\n\n") if p.strip()]) if text else 0
+        title, text = _extract_with_trafilatura(html, url)
+        method = "trafilatura"
 
-    return ExtractionResult(
-        url=url,
-        title=title,
-        text=text,
-        method=method if passed else "failed",
-        char_count=char_count,
-        paragraph_count=paragraph_count,
-        passed_quality_check=passed,
-    )
+        if not quality_check(text):
+            logger.info(f"Trafilatura quality check failed, trying readability for {url}")
+            alt_title, alt_text = _extract_with_readability(html)
+            if quality_check(alt_text) and (not text or len(alt_text) > len(text)):
+                title, text, method = alt_title, alt_text, "readability"
+                logger.info(f"Readability extraction succeeded for {url}")
+
+        text = clean_text(text) if text else text
+        passed = quality_check(text)
+        char_count = len(text) if text else 0
+        paragraph_count = len([p for p in text.split("\n\n") if p.strip()]) if text else 0
+
+        if passed:
+            logger.info(f"Extraction successful for {url}: method={method}, chars={char_count}")
+        else:
+            logger.warning(f"Extraction quality check failed for {url}: method={method}")
+
+        return ExtractionResult(
+            url=url,
+            title=title,
+            text=text,
+            method=method if passed else "failed",
+            char_count=char_count,
+            paragraph_count=paragraph_count,
+            passed_quality_check=passed,
+            error=None if passed else f"Quality check failed (chars={char_count}, paragraphs={paragraph_count})",
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error during extraction for {url}: {e}")
+        return ExtractionResult(url, None, None, "failed", 0, 0, False, str(e))
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
     result = extract_chapter("https://example.invalid/some-chapter-url")
     if result.passed_quality_check:
         print(f"[{result.method}] {result.title} ({result.char_count} chars)")
     else:
         print(f"Generic extraction failed for {result.url} — needs a site override")
+        if result.error:
+            print(f"Error: {result.error}")

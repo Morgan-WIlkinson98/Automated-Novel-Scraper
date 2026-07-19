@@ -3,28 +3,51 @@ storage.py
 """
 
 import sqlite3
+import logging
 import time
+from exceptions import DatabaseError, ValidationError
+
+logger = logging.getLogger(__name__)
 
 def init_storage(path="chapters.db"):
-    conn = sqlite3.connect(path)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS chapters (
-            url TEXT PRIMARY KEY,
-            series TEXT,
-            chapter_label TEXT,
-            title TEXT,
-            text TEXT,
-            extraction_method TEXT,
-            fetched_at REAL
-        )
-    """)
-    conn.commit()
-    return conn
+    """Initialize the chapters database."""
+    try:
+        conn = sqlite3.connect(path)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS chapters (
+                url TEXT PRIMARY KEY,
+                series TEXT,
+                chapter_label TEXT,
+                title TEXT,
+                text TEXT,
+                extraction_method TEXT,
+                fetched_at REAL
+            )
+        """)
+        conn.commit()
+        logger.info(f"Storage database initialized at {path}")
+        return conn
+    except sqlite3.Error as e:
+        logger.error(f"Failed to initialize storage database at {path}: {e}")
+        raise DatabaseError(f"Failed to initialize storage database: {e}") from e
+
 
 def save_chapter(conn, url, series, chapter_label, title, text, method):
-    conn.execute("""
-        INSERT OR IGNORE INTO chapters
-        (url, series, chapter_label, title, text, extraction_method, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (url, series, chapter_label, title, text, method, time.time()))
-    conn.commit()
+    """Save a chapter to the database."""
+    try:
+        # Validate inputs
+        if not url or not isinstance(url, str):
+            raise ValidationError("URL cannot be empty")
+        if not text or not isinstance(text, str):
+            raise ValidationError("Text cannot be empty")
+        
+        conn.execute("""
+            INSERT OR IGNORE INTO chapters
+            (url, series, chapter_label, title, text, extraction_method, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (url, series, chapter_label, title, text, method, time.time()))
+        conn.commit()
+        logger.info(f"Saved chapter: {title} ({method})")
+    except sqlite3.Error as e:
+        logger.error(f"Failed to save chapter {url}: {e}")
+        raise DatabaseError(f"Failed to save chapter: {e}") from e
