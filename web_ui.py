@@ -142,12 +142,20 @@ def export_page():
         return render_template('error.html', error=str(e)), 500
 
 
+def _relative_export_path(file_path: str) -> str:
+    """Convert an absolute export path to a path relative to EXPORT_DIR."""
+    try:
+        return str(Path(file_path).relative_to(Path(get_settings().EXPORT_DIR)))
+    except ValueError:
+        return str(Path(file_path).name)
+
+
 @app.route('/export/all', methods=['POST'])
 def export_all():
     """Export all series to EPUB."""
     try:
         files = export_all_to_epub(get_settings().CHAPTERS_DB, get_settings().EXPORT_DIR)
-        return jsonify({'success': True, 'files': files})
+        return jsonify({'success': True, 'files': [_relative_export_path(f) for f in files]})
     except Exception as e:
         logger.error(f"Export all failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -159,7 +167,7 @@ def export_series(series_name):
     try:
         file_path = export_series_to_epub(series_name, get_settings().CHAPTERS_DB, get_settings().EXPORT_DIR)
         if file_path:
-            return jsonify({'success': True, 'file': file_path})
+            return jsonify({'success': True, 'file': _relative_export_path(file_path)})
         else:
             return jsonify({'success': False, 'error': 'No chapters found for series'}), 404
     except Exception as e:
@@ -167,11 +175,15 @@ def export_series(series_name):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/download/<filename>')
+@app.route('/download/<path:filename>')
 def download_file(filename):
-    """Download exported file."""
+    """Download exported file (supports subfolder paths)."""
     try:
-        file_path = Path(get_settings().EXPORT_DIR) / filename
+        export_dir = Path(get_settings().EXPORT_DIR).resolve()
+        file_path = export_dir / filename
+        # Prevent directory traversal outside export_dir
+        if export_dir not in file_path.resolve().parents and file_path.resolve() != export_dir:
+            return render_template('error.html', error="Invalid path"), 403
         if file_path.exists():
             return send_file(str(file_path), as_attachment=True)
         else:

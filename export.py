@@ -64,13 +64,13 @@ def create_epub(series_name: str, chapters: List[dict], output_dir: Optional[str
     if output_dir is None:
         output_dir = _get_export_dir()
     
-    # Sanitize series name for filename
+    # Sanitize series name for filename/folder
     safe_name = "".join(c for c in series_name if c.isalnum() or c in (' ', '-', '_')).strip()
     if not safe_name:
         safe_name = "Unknown"
     
-    # Create output directory
-    output_path = Path(output_dir)
+    # Create output directory and series subfolder
+    output_path = Path(output_dir) / safe_name
     output_path.mkdir(parents=True, exist_ok=True)
     
     # Create EPUB
