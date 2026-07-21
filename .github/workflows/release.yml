@@ -53,20 +53,19 @@ jobs:
             --distpath "${DIST}" \
             desktop_app.py
 
-      - name: Package macOS app as DMG
+      - name: Package macOS app as zip
         if: runner.os == 'macOS'
         run: |
-          mkdir -p dist/dmg
-          cp -R "dist/macos/NovelScraper.app" "dist/dmg/"
-          ln -s /Applications "dist/dmg/Applications"
-          hdiutil create -volname "Novel Scraper" -srcfolder dist/dmg -ov -format UDZO "dist/macos/NovelScraper.dmg"
+          cd dist/macos
+          ln -sf /Applications Applications
+          zip -y -r "NovelScraper.app.zip" "NovelScraper.app" "Applications"
 
       - name: Upload macOS artifact
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v7
         with:
           name: macos-latest-build
-          path: dist/macos/NovelScraper.dmg
+          path: dist/macos/NovelScraper.app.zip
 
       - name: Upload Windows artifact
         if: runner.os == 'Windows'
@@ -162,7 +161,7 @@ jobs:
           else
             PRERELEASE="true"
           fi
-          ASSET_FILES=$(find artifacts -maxdepth 1 -type f \( -name '*.exe' -o -name '*.dmg' \))
+          ASSET_FILES=$(find artifacts -maxdepth 1 -type f \( -name '*.exe' -o -name '*.app.zip' \))
           if [ -z "$ASSET_FILES" ]; then
             echo "No release assets found"
             exit 1
