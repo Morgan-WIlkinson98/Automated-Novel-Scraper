@@ -64,7 +64,7 @@ jobs:
           Compress-Archive -Path "NovelScraper.exe" -DestinationPath "NovelScraper-Windows.zip"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.os }}-build
           path: dist/*/*.zip
@@ -138,7 +138,7 @@ jobs:
           PY
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
           merge-multiple: true
