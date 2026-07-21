@@ -57,20 +57,21 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           cd dist/macos
-          zip -r "NovelScraper-macOS.zip" "NovelScraper.app"
+          tar -czf "NovelScraper.app.tar.gz" "NovelScraper.app"
 
-      - name: Package Windows exe
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cd dist/windows
-          Compress-Archive -Path "NovelScraper.exe" -DestinationPath "NovelScraper-Windows.zip"
-
-      - name: Upload build artifact
+      - name: Upload macOS artifact
+        if: runner.os == 'macOS'
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.os }}-build
-          path: dist/*/*.zip
+          name: macos-latest-build
+          path: dist/macos/NovelScraper.app.tar.gz
+
+      - name: Upload Windows artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-latest-build
+          path: dist/windows/NovelScraper.exe
 
   release:
     needs: build
@@ -159,12 +160,12 @@ jobs:
           else
             PRERELEASE="true"
           fi
-          ZIP_FILES=$(find artifacts -type f -name '*.zip')
-          if [ -z "$ZIP_FILES" ]; then
-            echo "No zip artifacts found"
+          ASSET_FILES=$(find artifacts -maxdepth 1 -type f \( -name '*.exe' -o -name '*.tar.gz' \))
+          if [ -z "$ASSET_FILES" ]; then
+            echo "No release assets found"
             exit 1
           fi
-          gh release create "$VERSION" $ZIP_FILES \
+          gh release create "$VERSION" $ASSET_FILES \
             --title "$TITLE" \
             --generate-notes \
             --prerelease="$PRERELEASE"
