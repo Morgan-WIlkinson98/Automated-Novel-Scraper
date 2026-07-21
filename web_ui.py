@@ -23,7 +23,8 @@ from core.settings import get_settings, reload_settings
 from core.exceptions import DatabaseError
 from core.logging_config import setup_logging as setup_app_logging, get_log_path
 from auth.curl_parser import parse_curl_command
-from main import handle_new_entry, clean_series_name
+from main import handle_new_entry
+from core.utils import clean_series_name
 import feedparser
 from rss.rss_watcher import init_db as init_seen_db, poll_once
 
@@ -103,11 +104,31 @@ def rss_view(filename):
 
 @app.route('/series')
 def series_list():
-    """List all series."""
+    """List all series with reading status from the NovelUpdates export, optionally filtered by title."""
     try:
-        series = get_series_list(get_settings().CHAPTERS_DB)
-        return render_template('series.html', series=series)
-    except DatabaseError as e:
+        query = request.args.get('q', '').strip()
+        conn = get_db_connection()
+        if query:
+            like_query = f"%{query}%"
+            cursor = conn.execute("""
+                SELECT series, url, current_chapter_label, current_chapter_link,
+                       latest_chapter_label, latest_chapter_link, reading_list_name
+                FROM series_info
+                WHERE series LIKE ?
+                ORDER BY series
+            """, (like_query,))
+        else:
+            cursor = conn.execute("""
+                SELECT series, url, current_chapter_label, current_chapter_link,
+                       latest_chapter_label, latest_chapter_link, reading_list_name
+                FROM series_info
+                ORDER BY series
+            """)
+        series = [dict(row) for row in cursor]
+        conn.close()
+        return render_template('series.html', series=series, query=query)
+    except Exception as e:
+        logger.error(f"Error listing series: {e}")
         return render_template('error.html', error=str(e)), 500
 
 
@@ -424,6 +445,15 @@ def sync_series(series_name):
             try:
                 _sync_jobs[job_id]['message'] = 'Scraping series page (this may take a minute)...'
                 scraped = scrape_series_page(series_url)
+                if scraped.get('blocked'):
+                    _sync_jobs[job_id].update({
+                        'running': False,
+                        'completed': True,
+                        'message': 'Cloudflare blocked the series page; skipping sync.',
+                        'chapters': 0,
+                        'synopsis': '',
+                    })
+                    return
                 conn = get_db_connection()
                 save_series_info(
                     conn,

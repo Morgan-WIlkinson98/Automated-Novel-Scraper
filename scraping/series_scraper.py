@@ -146,7 +146,13 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200
         html = page.content()
         
         if 'cloudflare' in html.lower():
-            raise HTTPError(f"Cloudflare challenge blocked {base_url}")
+            logger.warning(f"Cloudflare challenge blocked {base_url}; skipping series page scrape")
+            return {
+                'url': series_url,
+                'synopsis': '',
+                'chapters': [],
+                'blocked': True,
+            }
         
         synopsis = _extract_synopsis(html)
         chapters = _parse_chapter_list(html, base_url)

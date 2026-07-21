@@ -3,17 +3,40 @@
 {% block title %}Series - Novel Scraper{% endblock %}
 {% block content %}
     <div class="card">
-        <h2>📚 All Series ({{ series|length }})</h2>
+        <h2>📚 Series ({{ series|length }})</h2>
+        <form method="get" action="/series" style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <input type="text" name="q" value="{{ query or '' }}" placeholder="Search series..." style="padding: 8px; flex: 1; min-width: 200px;">
+            <button type="submit" class="btn">Search</button>
+            {% if query %}
+            <a href="/series" class="btn" style="background: #95a5a6;">Clear</a>
+            {% endif %}
+        </form>
         <table style="margin-top: 20px;">
             <tr>
                 <th>Series Name</th>
-                <th>Action</th>
+                <th>Current Chapter</th>
+                <th>Latest Chapter</th>
+                <th style="width: 1%; white-space: nowrap;">Action</th>
             </tr>
             {% for s in series %}
             <tr>
-                <td><a href="/series/{{ s|urlencode }}">{{ s }}</a></td>
+                <td><a href="/series/{{ s['series']|urlencode }}">{{ s['series'] }}</a></td>
                 <td>
-                    <a href="/series/{{ s|urlencode }}" class="btn">View Details</a>
+                    {% if s['current_chapter_link'] %}
+                    <a href="{{ s['current_chapter_link'] }}" target="_blank" rel="noopener">{{ s['current_chapter_label'] or 'Current' }}</a>
+                    {% else %}
+                    {{ s['current_chapter_label'] or '—' }}
+                    {% endif %}
+                </td>
+                <td>
+                    {% if s['latest_chapter_link'] %}
+                    <a href="{{ s['latest_chapter_link'] }}" target="_blank" rel="noopener">{{ s['latest_chapter_label'] or 'Latest' }}</a>
+                    {% else %}
+                    {{ s['latest_chapter_label'] or '—' }}
+                    {% endif %}
+                </td>
+                <td style="white-space: nowrap; width: 1%;">
+                    <a href="/series/{{ s['series']|urlencode }}" class="btn">View Details</a>
                 </td>
             </tr>
             {% endfor %}

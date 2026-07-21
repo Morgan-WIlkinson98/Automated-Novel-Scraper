@@ -23,6 +23,25 @@
         </p>
         <p><strong>Available on NovelUpdates:</strong> {{ available_chapters|length }} chapters</p>
     </div>
+
+    <div class="card">
+        <h3>Reading Status</h3>
+        <p><strong>List:</strong> {{ series_info.reading_list_name or 'Unknown' }}</p>
+        <p><strong>Current chapter:</strong>
+            {% if series_info.current_chapter_link %}
+            <a href="{{ series_info.current_chapter_link }}" target="_blank" rel="noopener">{{ series_info.current_chapter_label or 'Current' }}</a>
+            {% else %}
+            {{ series_info.current_chapter_label or '—' }}
+            {% endif %}
+        </p>
+        <p><strong>Latest chapter:</strong>
+            {% if series_info.latest_chapter_link %}
+            <a href="{{ series_info.latest_chapter_link }}" target="_blank" rel="noopener">{{ series_info.latest_chapter_label or 'Latest' }}</a>
+            {% else %}
+            {{ series_info.latest_chapter_label or '—' }}
+            {% endif %}
+        </p>
+    </div>
     
     {% if active_downloads %}
     <div class="card">

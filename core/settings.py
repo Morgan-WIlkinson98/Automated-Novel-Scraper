@@ -30,6 +30,7 @@ class Settings:
         'MIN_PARAGRAPHS': 3,
         'SEEN_ENTRIES_DB': 'seen_entries.db',
         'CHAPTERS_DB': 'chapters.db',
+        'READING_LISTS_DIR': 'reading_lists',
         'EXPORT_DIR': None,
         'EXPORT_DIR_MAC': '/Users/morganwilkinson/Novel Exports',
         'EXPORT_DIR_WINDOWS': r'C:\Users\%USERNAME%\Novel Exports',

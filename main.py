@@ -10,6 +10,7 @@ import re
 import threading
 from urllib.parse import urlparse
 from core.settings import get_settings
+from core.utils import clean_series_name, novelupdates_series_url
 from rss.rss_watcher import run_forever
 from scraping.link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
 from scraping.generic_extractor import extract_chapter
@@ -21,20 +22,6 @@ from core.logging_config import setup_logging
 from scraping.series_scraper import scrape_series_page
 
 logger = logging.getLogger(__name__)
-
-
-def clean_series_name(title: str) -> str:
-    """Remove trailing chapter labels like ' c226' from an RSS entry title."""
-    if not title:
-        return "Unknown"
-    # Strip trailing "part", "part 1", "part 1/2" labels first
-    title = re.sub(r'\s+[Pp]art(?:\s*\d+(?:\.\d+)?(?:\s*/\s*\d+)?)?\s*$', '', title)
-    # Strip common trailing chapter patterns: c123, c 123, chapter 123, etc.
-    title = re.sub(r'\s*[Cc][\.\s]?\d+(?:\.\d+)?\s*$', '', title)
-    title = re.sub(r'\s*[Cc]hapter\s*\d+(?:\.\d+)?\s*$', '', title)
-    title = re.sub(r'\s*\(?\d+(?:\.\d+)?\)?\s*$', '', title)
-    title = re.sub(r'\s+', ' ', title)
-    return title.strip() or "Unknown"
 
 
 db = None
@@ -52,6 +39,9 @@ def _sync_series_info_async(series_name: str, series_url: str):
     try:
         logger.info(f"Background sync for {series_name}: {series_url}")
         data = scrape_series_page(series_url)
+        if data.get('blocked'):
+            logger.warning(f"Background sync skipped for {series_name}: Cloudflare block")
+            return
         conn = init_storage(get_settings().CHAPTERS_DB)
         save_series_info(
             conn,
@@ -81,8 +71,13 @@ def handle_new_entry(entry):
         series_name = clean_series_name(getattr(entry, "title", "unknown"))
         chapter_summary = getattr(entry, "summary", "")
         series_url_match = re.search(r'https?://www\.novelupdates\.com/series/[^/\s]+/?', chapter_summary)
-        if series_url_match:
-            save_series_info(db, series=series_name, url=series_url_match.group(0))
+        series_url = (
+            series_url_match.group(0).rstrip('/') + '/'
+            if series_url_match
+            else novelupdates_series_url(series_name)
+        )
+        if series_url:
+            save_series_info(db, series=series_name, url=series_url)
         
         # Resolve link
         try:
@@ -126,12 +121,20 @@ def handle_new_entry(entry):
                 text=result.text,
                 method=result.method,
             )
+
+            # Update the latest chapter reference for this series from the RSS feed
+            save_series_info(
+                db,
+                series=series_name,
+                latest_chapter_label=chapter_summary or getattr(entry, "title", ""),
+                latest_chapter_link=feed_link,
+            )
             
             # Kick off a background sync for the series page metadata
-            if series_url_match:
+            if series_url:
                 threading.Thread(
                     target=_sync_series_info_async,
-                    args=(series_name, series_url_match.group(0)),
+                    args=(series_name, series_url),
                     daemon=True,
                 ).start()
             

@@ -50,3 +50,6 @@ pids.json
 exports/
 rss_feeds/
 scraper_pid.json
+
+# Reading list exports (user data)
+reading_lists/
