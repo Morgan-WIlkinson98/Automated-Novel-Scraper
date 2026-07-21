@@ -2,9 +2,13 @@ name: Build and Release Novel Scraper
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+      - dev
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -15,10 +19,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -60,7 +64,7 @@ jobs:
           Compress-Archive -Path "NovelScraper.exe" -DestinationPath "NovelScraper-Windows.zip"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.os }}-build
           path: dist/*/*.zip
@@ -68,17 +72,96 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch'
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Compute release version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - << 'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+
+          def run(cmd):
+              return subprocess.check_output(cmd, text=True)
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = os.environ['GITHUB_REF_NAME']
+
+          try:
+              raw = run(['gh', 'release', 'list', '--json', 'tagName', '-L', '100'])
+              data = json.loads(raw)
+              tags = [item['tagName'] for item in data if 'tagName' in item]
+          except Exception:
+              tags = []
+
+          # Find latest main version like 1.0, 2.3, etc.
+          main_re = re.compile(r'^(\d+)\.(\d+)$')
+          main_versions = []
+          for t in tags:
+              m = main_re.match(t)
+              if m:
+                  main_versions.append((int(m.group(1)), int(m.group(2))))
+
+          if not main_versions:
+              base = (1, 0)
+          else:
+              base = max(main_versions)
+
+          if branch == 'main':
+              # Main releases: 1.0 -> 1.1 -> 1.2
+              new_base = (base[0], base[1] + 1)
+              version = f"{new_base[0]}.{new_base[1]}"
+              suffix = ''
+          else:
+              # Dev pre-releases: 1.1-dev.1, 1.1-dev.2, ...
+              base_str = f"{base[0]}.{base[1]}"
+              dev_re = re.compile(re.escape(base_str) + r'-dev\.(\d+)$')
+              dev_nums = [int(m.group(1)) for t in tags for m in [dev_re.match(t)] if m]
+              n = max(dev_nums) + 1 if dev_nums else 1
+              version = f"{base_str}-dev.{n}"
+              suffix = ' (dev)'
+
+          print(f"version={version}")
+          print(f"suffix={suffix}", file=sys.stderr)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"version={version}\n")
+              f.write(f"suffix={suffix}\n")
+          PY
+
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*.zip
-          draft: false
-          prerelease: false
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SUFFIX="${{ steps.version.outputs.suffix }}"
+          TITLE="NovelScraper ${VERSION}${SUFFIX}"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            PRERELEASE="false"
+          else
+            PRERELEASE="true"
+          fi
+          ZIP_FILES=$(find artifacts -type f -name '*.zip')
+          if [ -z "$ZIP_FILES" ]; then
+            echo "No zip artifacts found"
+            exit 1
+          fi
+          gh release create "$VERSION" $ZIP_FILES \
+            --title "$TITLE" \
+            --generate-notes \
+            --prerelease="$PRERELEASE"
