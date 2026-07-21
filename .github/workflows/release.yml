@@ -59,23 +59,24 @@ jobs:
           APP="dist/macos/NovelScraper.app"
           DMG="dist/macos/NovelScraper.dmg"
           TMP_DMG="dist/macos/NovelScraper-tmp.dmg"
+          MOUNT_DIR=$(mktemp -d)
           VOL="Novel Scraper"
 
-          # Size the temporary image to the app plus a 100 MB buffer
+          # Size the temporary image to the app plus a 200 MB buffer
           APP_SIZE=$(du -sm "$APP" | awk '{print $1}')
-          SIZE="$((APP_SIZE + 100))m"
+          SIZE="$((APP_SIZE + 200))m"
 
-          hdiutil create -size "$SIZE" -volname "$VOL" -fs HFS+ -o "$TMP_DMG"
+          rm -f "$TMP_DMG"
+          hdiutil create -ov -size "$SIZE" -volname "$VOL" -fs HFS+ -o "$TMP_DMG"
+          hdiutil attach -mountpoint "$MOUNT_DIR" -nobrowse -noverify "$TMP_DMG"
 
-          # Attach the temporary image and capture its mount point from the plist output
-          MOUNT=$(hdiutil attach -noautoopen -nobrowse -plist "$TMP_DMG" | python3 -c "import sys, plistlib; pl = plistlib.load(sys.stdin); print([e['mount-point'] for e in pl['system-entities'] if 'mount-point' in e][0])")
+          cp -R "$APP" "$MOUNT_DIR/"
+          ln -s /Applications "$MOUNT_DIR/Applications"
 
-          cp -R "$APP" "$MOUNT/"
-          ln -s /Applications "$MOUNT/Applications"
-
-          hdiutil detach "$MOUNT"
+          hdiutil detach "$MOUNT_DIR"
           hdiutil convert "$TMP_DMG" -format UDZO -o "$DMG"
-          rm "$TMP_DMG"
+          rm -f "$TMP_DMG"
+          rmdir "$MOUNT_DIR" 2>/dev/null || true
 
       - name: Upload macOS artifact
         if: runner.os == 'macOS'
