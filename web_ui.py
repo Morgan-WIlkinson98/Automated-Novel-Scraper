@@ -775,8 +775,17 @@ def api_test_auth():
 
 def setup_app():
     """Ensure required directories and database tables exist."""
-    Path("templates").mkdir(exist_ok=True)
-    get_settings().EXPORT_DIR and Path(get_settings().EXPORT_DIR).mkdir(exist_ok=True)
+    try:
+        Path("templates").mkdir(exist_ok=True)
+    except (OSError, PermissionError):
+        # Bundled apps have templates embedded; creating the local dir is not required.
+        pass
+    try:
+        export_dir = get_settings().EXPORT_DIR
+        if export_dir:
+            Path(export_dir).mkdir(parents=True, exist_ok=True)
+    except (OSError, PermissionError):
+        pass
     from data.storage import init_storage
     init_storage(get_settings().CHAPTERS_DB)
 
