@@ -15,10 +15,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -60,7 +60,7 @@ jobs:
           Compress-Archive -Path "NovelScraper.exe" -DestinationPath "NovelScraper-Windows.zip"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.os }}-build
           path: dist/*/*.zip
@@ -68,17 +68,30 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*.zip
-          draft: false
-          prerelease: false
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${{ github.ref_name }}"
+            TITLE="NovelScraper ${{ github.ref_name }}"
+          else
+            TAG="manual-${{ github.run_number }}"
+            TITLE="NovelScraper manual build ${{ github.run_number }}"
+          fi
+          gh release create "$TAG" artifacts/*.zip \
+            --title "$TITLE" \
+            --generate-notes \
+            --prerelease="${{ github.event_name == 'workflow_dispatch' }}"
