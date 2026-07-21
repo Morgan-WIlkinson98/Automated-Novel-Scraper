@@ -30,7 +30,10 @@ from rss.rss_watcher import init_db as init_seen_db, poll_once
 
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
+# PyInstaller sets sys._MEIPASS when running from a bundle.
+BASE_DIR = Path(getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__))))
+
+app = Flask(__name__, template_folder=str(BASE_DIR / 'templates'))
 app.secret_key = 'novel-scraper-secret-key-change-in-production'
 
 # In-memory progress tracking for background jobs
@@ -958,8 +961,13 @@ def api_logs():
         return jsonify({'error': str(e)}), 500
 
 
-if __name__ == "__main__":
+def main():
+    """Run the Flask web UI."""
     setup_app_logging()
     setup_app()
-    app.run(host="0.0.0.0", port=6110, debug=True)
+    app.run(host="0.0.0.0", port=6110, debug=False, use_reloader=False)
+
+
+if __name__ == "__main__":
+    main()
 

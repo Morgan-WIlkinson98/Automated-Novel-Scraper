@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "novel-scraper"
+version = "0.1.0"
+description = "NovelUpdates scraper with Flask web UI and optional desktop GUI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "feedparser",
+    "requests",
+    "trafilatura",
+    "readability-lxml",
+    "beautifulsoup4",
+    "lxml",
+    "ebooklib",
+    "flask",
+    "playwright",
+    "pywebview",
+]
+
+[project.scripts]
+novel-scraper = "main:main"
+novel-scraper-web = "web_ui:main"
+novel-scraper-gui = "desktop_app:main"
+
+[tool.setuptools]
+py-modules = ["desktop_app", "main", "start", "web_ui"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["auth*", "core*", "data*", "rss*", "scraping*"]
+exclude = ["__pycache__*"]
