@@ -65,7 +65,7 @@ jobs:
           APP_SIZE=$(du -sm "$APP" | awk '{print $1}')
           SIZE="$((APP_SIZE + 100))m"
 
-          hdiutil create -size "$SIZE" -volname "$VOL" -fs HFS+ -format UDRW -o "$TMP_DMG"
+          hdiutil create -size "$SIZE" -volname "$VOL" -fs HFS+ -o "$TMP_DMG"
 
           # Attach the temporary image and capture its mount point from the plist output
           MOUNT=$(hdiutil attach -noautoopen -nobrowse -plist "$TMP_DMG" | python3 -c "import sys, plistlib; pl = plistlib.load(sys.stdin); print([e['mount-point'] for e in pl['system-entities'] if 'mount-point' in e][0])")
