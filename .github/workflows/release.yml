@@ -156,7 +156,12 @@ jobs:
           else
             PRERELEASE="true"
           fi
-          gh release create "$VERSION" artifacts/*.zip \
+          ZIP_FILES=$(find artifacts -type f -name '*.zip')
+          if [ -z "$ZIP_FILES" ]; then
+            echo "No zip artifacts found"
+            exit 1
+          fi
+          gh release create "$VERSION" $ZIP_FILES \
             --title "$TITLE" \
             --generate-notes \
             --prerelease="$PRERELEASE"
