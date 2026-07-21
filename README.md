@@ -46,6 +46,7 @@ For detailed documentation, see:
 - **[Deployment Guide](docs/deployment.md)** - Deployment instructions for various environments
 - **[API Documentation](docs/api.md)** - Complete API reference for all modules
 - **[Contributing](CONTRIBUTING.md)** - Contribution guidelines and coding standards
+- **[Project Guide](docs/project-guide.md)** - End-to-end overview, installation, packaged desktop releases, and workflow
 
 ## Installation
 
