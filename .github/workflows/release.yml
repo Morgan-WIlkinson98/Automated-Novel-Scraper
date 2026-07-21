@@ -2,9 +2,13 @@ name: Build and Release Novel Scraper
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+      - dev
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -68,10 +72,70 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+
+      - name: Compute release version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - << 'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+
+          def run(cmd):
+              return subprocess.check_output(cmd, text=True)
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = os.environ['GITHUB_REF_NAME']
+
+          try:
+              raw = run(['gh', 'release', 'list', '--json', 'tagName', '-L', '100'])
+              data = json.loads(raw)
+              tags = [item['tagName'] for item in data if 'tagName' in item]
+          except Exception:
+              tags = []
+
+          # Find latest main version like 1.0, 2.3, etc.
+          main_re = re.compile(r'^(\d+)\.(\d+)$')
+          main_versions = []
+          for t in tags:
+              m = main_re.match(t)
+              if m:
+                  main_versions.append((int(m.group(1)), int(m.group(2))))
+
+          if not main_versions:
+              base = (1, 0)
+          else:
+              base = max(main_versions)
+
+          if branch == 'main':
+              # Main releases: 1.0 -> 1.1 -> 1.2
+              new_base = (base[0], base[1] + 1)
+              version = f"{new_base[0]}.{new_base[1]}"
+              suffix = ''
+          else:
+              # Dev pre-releases: 1.1-dev.1, 1.1-dev.2, ...
+              base_str = f"{base[0]}.{base[1]}"
+              dev_re = re.compile(re.escape(base_str) + r'-dev\.(\d+)$')
+              dev_nums = [int(m.group(1)) for t in tags for m in [dev_re.match(t)] if m]
+              n = max(dev_nums) + 1 if dev_nums else 1
+              version = f"{base_str}-dev.{n}"
+              suffix = ' (dev)'
+
+          print(f"version={version}")
+          print(f"suffix={suffix}", file=sys.stderr)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"version={version}\n")
+              f.write(f"suffix={suffix}\n")
+          PY
 
       - name: Download build artifacts
         uses: actions/download-artifact@v5
@@ -84,14 +148,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            TAG="${{ github.ref_name }}"
-            TITLE="NovelScraper ${{ github.ref_name }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          SUFFIX="${{ steps.version.outputs.suffix }}"
+          TITLE="NovelScraper ${VERSION}${SUFFIX}"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            PRERELEASE="false"
           else
-            TAG="manual-${{ github.run_number }}"
-            TITLE="NovelScraper manual build ${{ github.run_number }}"
+            PRERELEASE="true"
           fi
-          gh release create "$TAG" artifacts/*.zip \
+          gh release create "$VERSION" artifacts/*.zip \
             --title "$TITLE" \
             --generate-notes \
-            --prerelease="${{ github.event_name == 'workflow_dispatch' }}"
+            --prerelease="$PRERELEASE"
