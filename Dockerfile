@@ -6,6 +6,7 @@ WORKDIR /app
 # Install system dependencies for Playwright and lxml
 RUN apt-get update && apt-get install -y \
     wget \
+    curl \
     gnupg \
     ca-certificates \
     fonts-liberation \

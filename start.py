@@ -72,6 +72,16 @@ def main():
     
     def _on_sigterm(signum, frame):
         logger.info(f"Received signal {signum}, stopping scraper and exiting...")
+        for name, process in processes:
+            if process.poll() is None:
+                logger.info(f"Terminating {name}")
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+        clear_pids()
         sys.exit(0)
     signal.signal(signal.SIGTERM, _on_sigterm)
     
@@ -81,8 +91,6 @@ def main():
         web_ui = start_process(
             "web_ui.py",
             env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
             start_new_session=True,
             creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0),
         )
@@ -125,7 +133,7 @@ def main():
         logger.info("Stopping services...")
     finally:
         for name, process in processes:
-            if name == "SCRAPER" and process.poll() is None:
+            if process.poll() is None:
                 logger.info(f"Terminating {name}")
                 process.terminate()
                 try:
@@ -134,7 +142,7 @@ def main():
                     process.kill()
                     process.wait()
         clear_pids()
-        logger.info("Scraper stopped; web UI left running")
+        logger.info("All services stopped")
 
 
 if __name__ == "__main__":
