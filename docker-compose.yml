@@ -1,0 +1,47 @@
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - novel-scraper
+    networks:
+      - novel-scraper-network
+    restart: unless-stopped
+
+  novel-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: novel-scraper
+    # No external port mapping - only accessible via nginx proxy
+    volumes:
+      # Persist databases
+      - ./data:/app/data
+      # Mount config file if it exists (optional)
+      - ./config.py:/app/config.py:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - FLASK_APP=web_ui.py
+      - FLASK_ENV=production
+      # Optional: Override RSS feed URL
+      # - RSS_FEED_URL=https://www.novelupdates.com/rss/
+      # Optional: Set polling interval (seconds)
+      # - POLL_INTERVAL_SECONDS=900
+    restart: unless-stopped
+    command: ["python", "start.py"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6110/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - novel-scraper-network
+
+networks:
+  novel-scraper-network:
+    driver: bridge

@@ -27,8 +27,8 @@ This guide provides detailed instructions for developing, testing, and debugging
 #### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/Morgan-Wilkinson/AI-Web-Scrapper.git
-cd AI-Web-Scrapper
+git clone https://github.com/Morgan-Wilkinson/AI-Web-Scraper.git
+cd AI-Web-Scraper
 git checkout v2
 ```
 
@@ -69,7 +69,7 @@ python -c "from readability import Document; print('readability installed')"
 ## Project Structure
 
 ```
-AI-Web-Scrapper/
+AI-Web-Scraper/
 ├── docs/                      # Documentation
 │   ├── architecture.md        # System architecture
 │   ├── development.md         # This file

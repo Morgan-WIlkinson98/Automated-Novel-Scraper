@@ -91,6 +91,8 @@ def create_epub(series_name: str, chapters: List[dict], output_dir: Optional[str
         
         # Create chapter file
         file_name = f"chapter_{i+1:03d}.xhtml"
+        # Process text outside f-string to avoid backslash issues
+        processed_text = chapter_text.replace('\n\n', '</p><p>').replace('\n', '<br/>')
         chapter_content = f"""
         <html>
         <head>
@@ -99,7 +101,7 @@ def create_epub(series_name: str, chapters: List[dict], output_dir: Optional[str
         <body>
             <h1>{chapter_title}</h1>
             <div>
-                {chapter_text.replace('\n\n', '</p><p>').replace('\n', '<br/>')}
+                {processed_text}
             </div>
         </body>
         </html>
