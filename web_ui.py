@@ -24,6 +24,7 @@ from core.exceptions import DatabaseError
 from core.logging_config import setup_logging as setup_app_logging, get_log_path
 from auth.curl_parser import parse_curl_command
 from main import handle_new_entry
+from rss.rss_watcher import load_xml_exports, trigger_periodic_export, _get_periodic_export_dir
 from core.utils import clean_series_name
 import feedparser
 from rss.rss_watcher import init_db as init_seen_db, poll_once
@@ -825,6 +826,67 @@ def api_fetch_rss():
         return jsonify({'success': True, 'message': 'RSS fetch started. Check logs for progress.'})
     except Exception as e:
         logger.error(f"Fetch RSS failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/load_xml_exports', methods=['POST'])
+def api_load_xml_exports():
+    """Manually trigger loading of XML exports from data/xml_exports."""
+    try:
+        import threading
+        
+        def _load():
+            try:
+                load_xml_exports(handle_new_entry)
+            except Exception as e:
+                logger.error(f"Failed to load XML exports: {e}")
+        
+        thread = threading.Thread(target=_load, daemon=True)
+        thread.start()
+        return jsonify({'success': True, 'message': 'XML imports started. Check logs for progress.'})
+    except Exception as e:
+        logger.error(f"Load XML exports failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/periodic_exports')
+def api_periodic_exports():
+    """List all periodic RSS exports in the main export directory."""
+    try:
+        periodic_dir = _get_periodic_export_dir()
+        files = sorted(periodic_dir.glob('rss_export_*.xml'), key=lambda p: p.stat().st_mtime, reverse=True)
+        export_info = []
+        for file in files:
+            export_info.append({
+                'name': file.name,
+                'size': file.stat().st_size,
+                'modified': file.stat().st_mtime
+            })
+        return jsonify({'success': True, 'exports': export_info, 'directory': str(periodic_dir)})
+    except Exception as e:
+        logger.error(f"Error listing periodic exports: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/trigger_periodic_export', methods=['POST'])
+def api_trigger_periodic_export():
+    """Manually trigger a periodic RSS export."""
+    try:
+        from rss.rss_watcher import fetch_authenticated_feed
+        
+        # Fetch current RSS feed
+        settings = get_settings()
+        feed_content = fetch_authenticated_feed(settings.RSS_FEED_URL)
+        
+        # Trigger periodic export
+        export_path = trigger_periodic_export(feed_content)
+        
+        if export_path:
+            return jsonify({'success': True, 'message': f'Periodic export saved to {export_path}', 'path': str(export_path)})
+        else:
+            return jsonify({'success': True, 'message': 'Periodic export skipped - duplicate content'})
+    except Exception as e:
+        logger.error(f"Trigger periodic export failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

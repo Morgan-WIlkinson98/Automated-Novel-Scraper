@@ -11,7 +11,7 @@ import threading
 from urllib.parse import urlparse
 from core.settings import get_settings
 from core.utils import clean_series_name, novelupdates_series_url
-from rss.rss_watcher import run_forever
+from rss.rss_watcher import run_forever, load_xml_exports
 from scraping.link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
 from scraping.generic_extractor import extract_chapter
 from scraping.site_overrides import extract_with_override
@@ -55,7 +55,7 @@ def _sync_series_info_async(series_name: str, series_url: str):
     except Exception as e:
         logger.error(f"Background sync failed for {series_name}: {e}")
 
-def handle_new_entry(entry):
+def handle_new_entry(entry, is_import=False):
     """Process a new RSS entry through the complete pipeline."""
     try:
         db = get_db()
@@ -64,7 +64,7 @@ def handle_new_entry(entry):
             logger.warning("Entry has no link, skipping")
             return
         
-        logger.info(f"Processing entry: {getattr(entry, 'title', 'unknown')}")
+        logger.info(f"Processing entry: {getattr(entry, 'title', 'unknown')} (import={is_import})")
         
         # Capture series name and URL from RSS metadata as soon as possible,
         # so new series appear in the list even if extraction fails.
@@ -78,6 +78,18 @@ def handle_new_entry(entry):
         )
         if series_url:
             save_series_info(db, series=series_name, url=series_url)
+        
+        # For imports, we just want to build the series catalog, not extract chapters
+        if is_import:
+            logger.info(f"Import mode: Added series {series_name} to catalog from XML export")
+            # Update the latest chapter reference for this series from the RSS feed
+            save_series_info(
+                db,
+                series=series_name,
+                latest_chapter_label=chapter_summary or getattr(entry, "title", ""),
+                latest_chapter_link=feed_link,
+            )
+            return
         
         # Resolve link
         try:
@@ -162,6 +174,11 @@ def main():
         db = init_storage(settings.CHAPTERS_DB)
         logger.info("Database initialized")
         
+        # Load XML exports on startup to build series catalog
+        logger.info("Loading XML exports from data/xml_exports")
+        load_xml_exports(handle_new_entry)
+        
+        # Start the RSS watcher
         run_forever(handle_new_entry)
         
     except DatabaseError as e:
