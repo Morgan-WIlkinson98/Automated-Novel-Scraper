@@ -37,8 +37,8 @@ The pipeline is deliberately polite: it respects `robots.txt`, enforces a minimu
 
 ```bash
 # Clone
-git clone https://github.com/Morgan-Wilkinson/Automated-Novel-Scrapper.git
-cd Automated-Novel-Scrapper
+git clone https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper.git
+cd Automated-Novel-Scraper
 
 # Create and activate a virtual environment (optional but recommended)
 python -m venv .venv
@@ -138,7 +138,7 @@ These values are shown on the series list and detail pages.
 ## Project layout
 
 ```
-Automated-Novel-Scrapper/
+Automated-Novel-Scraper/
 ├── .github/workflows/release.yml  # CI/CD for desktop releases
 ├── auth/                          # Authentication utilities
 ├── core/                          # Settings, logging, utils, NU import

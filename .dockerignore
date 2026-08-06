@@ -1,0 +1,60 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.venv
+venv
+ENV
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Databases (will be created in container)
+*.db
+*.sqlite
+*.sqlite3
+
+# Process IDs
+pids.json
+scraper_pid.json
+
+# Logs
+*.log
+
+# Documentation (not needed for runtime)
+docs
+*.md
+!README.md
+
+# Desktop app files (not needed in container)
+BookIcon.icns
+BookIcon.ico
+BookIcon.jpg
+desktop_app.py
+
+# Config (should be mounted as volume)
+config.py
+
+# CI/CD
+.github

@@ -32,8 +32,8 @@ Thank you for your interest in contributing to the AI Novel Web Scraper project!
 1. **Fork and clone the repository**
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/AI-Web-Scrapper.git
-cd AI-Web-Scrapper
+git clone https://github.com/YOUR_USERNAME/AI-Web-Scraper.git
+cd AI-Web-Scraper
 ```
 
 2. **Create a virtual environment**

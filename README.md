@@ -50,6 +50,66 @@ For detailed documentation, see:
 
 ## Installation
 
+### Docker (Recommended)
+
+The easiest way to run this project is with Docker using an nginx reverse proxy:
+
+```bash
+# Build and start with docker-compose
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop the service
+docker-compose down
+```
+
+**Setup custom hostname:**
+
+Add an entry to your hosts file to access the service via http://novelscraper.local:
+
+**Windows (as Administrator):**
+```bash
+echo 127.0.0.1 novelscraper.local >> C:\Windows\System32\drivers\etc\hosts
+```
+
+**Linux/Mac:**
+```bash
+echo "127.0.0.1 novelscraper.local" | sudo tee -a /etc/hosts
+```
+
+Then access the service at http://novelscraper.local
+
+**Architecture:**
+- nginx reverse proxy listens on port 80
+- Routes traffic to the novel scraper container based on hostname
+- Easy to add more web apps later by adding new server blocks to nginx.conf
+
+**Adding more web apps:**
+To add another web app, edit `nginx.conf` and add a new server block:
+
+```nginx
+server {
+    listen 80;
+    server_name yourapp.local;
+
+    location / {
+        proxy_pass http://yourapp:port;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Then add the corresponding entry to your hosts file and docker-compose.yml.
+
+Databases are persisted in the `./data` directory. If you need to configure authentication, create a `config.py` file and it will be automatically mounted.
+
+### Manual Installation
+
 Install dependencies:
 
 ```bash

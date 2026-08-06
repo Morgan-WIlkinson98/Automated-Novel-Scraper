@@ -18,8 +18,8 @@ This guide covers deploying the AI Novel Web Scraper in various environments, fr
 
 1. **Clone and setup:**
 ```bash
-git clone https://github.com/Morgan-Wilkinson/AI-Web-Scrapper.git
-cd AI-Web-Scrapper
+git clone https://github.com/Morgan-Wilkinson/AI-Web-Scraper.git
+cd AI-Web-Scraper
 git checkout v2
 python -m venv venv
 source venv/bin/activate
@@ -96,15 +96,15 @@ sudo yum install git -y  # CentOS/RHEL
 **Clone repository:**
 ```bash
 cd /opt
-sudo git clone https://github.com/Morgan-Wilkinson/AI-Web-Scrapper.git
-cd AI-Web-Scrapper
+sudo git clone https://github.com/Morgan-Wilkinson/AI-Web-Scraper.git
+cd AI-Web-Scraper
 sudo git checkout v2
 ```
 
 **Create deployment user (recommended):**
 ```bash
 sudo useradd -r -s /bin/false scraper
-sudo chown -R scraper:scraper /opt/AI-Web-Scrapper
+sudo chown -R scraper:scraper /opt/AI-Web-Scraper
 ```
 
 **Setup virtual environment:**
@@ -273,9 +273,9 @@ After=network.target
 Type=simple
 User=scraper
 Group=scraper
-WorkingDirectory=/opt/AI-Web-Scrapper
-Environment="PATH=/opt/AI-Web-Scrapper/venv/bin"
-ExecStart=/opt/AI-Web-Scrapper/venv/bin/python main.py
+WorkingDirectory=/opt/AI-Web-Scraper
+Environment="PATH=/opt/AI-Web-Scraper/venv/bin"
+ExecStart=/opt/AI-Web-Scraper/venv/bin/python main.py
 Restart=always
 RestartSec=10
 StandardOutput=append:/var/log/scraper/output.log
@@ -508,7 +508,7 @@ sudo systemctl start novel-scraper
 **Git-based backup:**
 
 ```bash
-# In /opt/AI-Web-Scrapper
+# In /opt/AI-Web-Scraper
 sudo -u scraper git add -A
 sudo -u scraper git commit -m "Backup before deployment"
 sudo -u scraper git push origin backup-branch
@@ -525,9 +525,9 @@ sudo useradd -r -s /bin/false scraper
 
 **File permissions:**
 ```bash
-sudo chown -R scraper:scraper /opt/AI-Web-Scrapper
-sudo chmod 750 /opt/AI-Web-Scrapper
-sudo chmod 640 /opt/AI-Web-Scrapper/*.py
+sudo chown -R scraper:scraper /opt/AI-Web-Scraper
+sudo chmod 750 /opt/AI-Web-Scraper
+sudo chmod 640 /opt/AI-Web-Scraper/*.py
 ```
 
 ### Firewall Configuration
@@ -601,7 +601,7 @@ sudo journalctl -u novel-scraper -n 50
 
 **Common issues:**
 - Missing dependencies: Reinstall with `pip install -r requirements.txt`
-- Permission errors: Check file ownership with `ls -la /opt/AI-Web-Scrapper`
+- Permission errors: Check file ownership with `ls -la /opt/AI-Web-Scraper`
 - Python path issues: Verify venv is properly configured
 
 ### High Memory Usage
@@ -674,7 +674,7 @@ sudo -u scraper venv/bin/pip install --upgrade -r requirements.txt
 
 **Update application code:**
 ```bash
-cd /opt/AI-Web-Scrapper
+cd /opt/AI-Web-Scraper
 sudo -u scraper git pull origin v2
 sudo systemctl restart novel-scraper
 ```
