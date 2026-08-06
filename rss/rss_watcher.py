@@ -9,6 +9,7 @@ import sqlite3
 import logging
 import time
 import requests
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from core.exceptions import DatabaseError, RSSFeedError, ValidationError
@@ -108,8 +109,81 @@ def _get_rss_feeds_dir() -> Path:
     return feed_dir
 
 
+def _get_xml_exports_dir() -> Path:
+    """Directory where RSS feed XML exports are stored for catalog building."""
+    xml_dir = Path("data") / "xml_exports"
+    xml_dir.mkdir(parents=True, exist_ok=True)
+    return xml_dir
+
+
+def _get_periodic_export_dir() -> Path:
+    """Directory where periodic RSS feed XML exports are stored for user access."""
+    settings = get_settings()
+    export_dir = Path(settings.EXPORT_DIR)
+    periodic_dir = export_dir / "rss_exports"
+    periodic_dir.mkdir(parents=True, exist_ok=True)
+    return periodic_dir
+
+
+def _get_content_hash(content: str) -> str:
+    """Generate a hash of the content for duplicate detection."""
+    return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+
+def _is_duplicate_content(content: str, export_dir: Path) -> bool:
+    """Check if content already exists in the export directory."""
+    content_hash = _get_content_hash(content)
+    
+    # Check if any existing file has the same hash
+    for existing_file in export_dir.glob("rss_export_*.xml"):
+        try:
+            existing_content = existing_file.read_text(encoding="utf-8")
+            if _get_content_hash(existing_content) == content_hash:
+                logger.debug(f"Duplicate content detected, skipping export (matches {existing_file.name})")
+                return True
+        except Exception as e:
+            logger.warning(f"Error reading existing file {existing_file.name}: {e}")
+            continue
+    
+    return False
+
+
+def save_periodic_rss_export(content: str) -> Path:
+    """Save RSS feed to periodic export directory with duplicate detection."""
+    periodic_dir = _get_periodic_export_dir()
+    
+    # Skip if duplicate content
+    if _is_duplicate_content(content, periodic_dir):
+        logger.info("Skipping periodic RSS export - duplicate content")
+        return None
+    
+    # Save with timestamp including microseconds for uniqueness
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    export_path = periodic_dir / f"rss_export_{timestamp}.xml"
+    
+    try:
+        export_path.write_text(content, encoding="utf-8")
+        logger.info(f"Saved periodic RSS export to {export_path}")
+        return export_path
+    except Exception as e:
+        logger.error(f"Failed to save periodic RSS export: {e}")
+        return None
+
+
+# Track last periodic export time
+_last_periodic_export_time = 0
+_PERIODIC_EXPORT_INTERVAL = 15 * 60  # 15 minutes in seconds
+
+
+def trigger_periodic_export(content: str) -> Path:
+    """Force an immediate periodic export regardless of time interval."""
+    return save_periodic_rss_export(content)
+
+
 def save_raw_rss_feed(content: str) -> Path:
     """Archive the raw RSS feed XML with a timestamp and keep a latest.xml copy."""
+    global _last_periodic_export_time
+    
     feed_dir = _get_rss_feeds_dir()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     archive_path = feed_dir / f"feed_{timestamp}.xml"
@@ -120,7 +194,79 @@ def save_raw_rss_feed(content: str) -> Path:
         logger.info(f"Saved raw RSS feed to {archive_path} and {latest_path}")
     except Exception as e:
         logger.warning(f"Failed to save raw RSS feed: {e}")
+    
+    # Also save to xml_exports directory
+    xml_exports_dir = _get_xml_exports_dir()
+    xml_export_path = xml_exports_dir / f"feed_{timestamp}.xml"
+    try:
+        xml_export_path.write_text(content, encoding="utf-8")
+        logger.info(f"Saved RSS feed export to {xml_export_path}")
+    except Exception as e:
+        logger.warning(f"Failed to save RSS feed export: {e}")
+    
+    # Check if it's time for periodic export to main export directory
+    current_time = time.time()
+    if current_time - _last_periodic_export_time >= _PERIODIC_EXPORT_INTERVAL:
+        save_periodic_rss_export(content)
+        _last_periodic_export_time = current_time
+    
     return archive_path
+
+
+def load_xml_exports(on_new_entry):
+    """Load and process all XML files from the xml_exports directory."""
+    xml_dir = _get_xml_exports_dir()
+    
+    if not xml_dir.exists():
+        logger.info(f"XML exports directory does not exist: {xml_dir}")
+        return
+    
+    xml_files = sorted(xml_dir.glob("*.xml"))
+    
+    if not xml_files:
+        logger.info(f"No XML files found in {xml_dir}")
+        return
+    
+    logger.info(f"Found {len(xml_files)} XML files in {xml_dir}")
+    
+    processed_count = 0
+    for xml_file in xml_files:
+        try:
+            logger.info(f"Processing XML file: {xml_file.name}")
+            content = xml_file.read_text(encoding="utf-8")
+            
+            # Parse the feed content
+            feed = feedparser.parse(content)
+            
+            if feed.bozo:
+                logger.warning(f"Feed parsing warning for {xml_file.name}: {feed.bozo_exception}")
+            
+            if not feed.entries:
+                logger.warning(f"No entries found in {xml_file.name}")
+                continue
+            
+            logger.info(f"Found {len(feed.entries)} entries in {xml_file.name}")
+            
+            for entry in feed.entries:
+                try:
+                    guid = getattr(entry, "id", entry.link)
+                    if not guid:
+                        logger.warning("Entry has no GUID or link, skipping")
+                        continue
+                    
+                    # Process the entry (without database tracking since these are imports)
+                    logger.info(f"Processing imported entry: {getattr(entry, 'title', 'unknown')}")
+                    on_new_entry(entry, is_import=True)
+                    processed_count += 1
+                except Exception as e:
+                    logger.error(f"Error processing entry from {xml_file.name}: {e}")
+                    continue
+                    
+        except Exception as e:
+            logger.error(f"Failed to process XML file {xml_file.name}: {e}")
+            continue
+    
+    logger.info(f"Processed {processed_count} entries from XML exports")
 
 
 def poll_once(conn, on_new_entry):
@@ -157,7 +303,7 @@ def poll_once(conn, on_new_entry):
                 
                 if is_new_entry(conn, guid):
                     logger.info(f"Processing new entry: {getattr(entry, 'title', 'unknown')}")
-                    on_new_entry(entry)
+                    on_new_entry(entry, is_import=False)
                     mark_seen(conn, guid, entry.link)
                     processed_count += 1
             except Exception as e:
