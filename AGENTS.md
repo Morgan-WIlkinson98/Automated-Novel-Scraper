@@ -69,7 +69,10 @@ When working on this repository:
 2. Create feature branch from main: `feature/ISSUE-123-fix-description`
 3. Implement changes following Python best practices
 4. Test thoroughly before creating PR
-5. Create draft PR to main linking to issue
+5. Create draft PR to main linking to issue with:
+   - Assignee: repository owner/user
+   - Reviewer: repository owner/user
+   - Label: issue ID (e.g., "123" for issue #123)
 6. Request user testing and confirmation
 7. Create final backup after user confirmation
 8. Merge to dev for further testing

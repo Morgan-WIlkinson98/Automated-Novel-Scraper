@@ -8,6 +8,13 @@ python-app - Python-based novel RSS feed scraper with web UI
 ### Development Workflow
 Follow the global development-workflow skill for all changes.
 
+**PR Requirements**:
+- PR must be in draft state
+- PR must link to issue with "Resolves #[ISSUE-ID]"
+- PR must have assignee (repository owner/user)
+- PR must have reviewer (repository owner/user)
+- PR must have issue ID as label (e.g., "123" for issue #123)
+
 ### Backup Requirements
 - **CRITICAL**: Always backup data directory before any data structure changes
 - Backup configuration files (config.py) before major configuration changes
