@@ -4,8 +4,8 @@ Depends on: feedparser, requests
     pip install feedparser requests
 """
 
+import os
 import feedparser
-import sqlite3
 import logging
 import time
 import requests
@@ -13,7 +13,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 from core.exceptions import DatabaseError, RSSFeedError, ValidationError
-
+from core.database_manager import get_database_manager
 from core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -24,22 +24,31 @@ def _get_config():
 
 
 def init_db(path="seen_entries.db"):
-    """Initialize SQLite database for tracking seen RSS entries."""
-    try:
-        conn = sqlite3.connect(path)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS seen_entries (
-                guid TEXT PRIMARY KEY,
-                link TEXT,
-                first_seen REAL
-            )
-        """)
-        conn.commit()
-        logger.info(f"Database initialized at {path}")
-        return conn
-    except sqlite3.Error as e:
-        logger.error(f"Failed to initialize database at {path}: {e}")
-        raise DatabaseError(f"Failed to initialize database: {e}") from e
+    """Initialize database for tracking seen RSS entries."""
+    db_manager = get_database_manager()
+    
+    # Only handle SQLite-specific initialization for backwards compatibility
+    if os.getenv("DB_TYPE", "sqlite").lower() == "sqlite":
+        try:
+            import sqlite3
+            conn = sqlite3.connect(path)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS seen_entries (
+                    guid TEXT PRIMARY KEY,
+                    link TEXT,
+                    first_seen REAL
+                )
+            """)
+            conn.commit()
+            logger.info(f"Database initialized at {path}")
+            return conn
+        except Exception as e:
+            logger.error(f"Failed to initialize database at {path}: {e}")
+            raise DatabaseError(f"Failed to initialize database: {e}") from e
+    else:
+        # PostgreSQL table is created by the init script
+        logger.info("Using PostgreSQL - seen_entries table created by initialization script")
+        return db_manager
 
 
 def is_new_entry(conn, guid: str) -> bool:
@@ -47,11 +56,21 @@ def is_new_entry(conn, guid: str) -> bool:
     try:
         if not guid:
             raise ValidationError("GUID cannot be empty")
-        cur = conn.execute("SELECT 1 FROM seen_entries WHERE guid = ?", (guid,))
-        is_new = cur.fetchone() is None
+        
+        db_manager = get_database_manager()
+        
+        if db_manager.db_type == "sqlite":
+            cur = conn.execute("SELECT 1 FROM seen_entries WHERE guid = ?", (guid,))
+            is_new = cur.fetchone() is None
+        else:
+            # PostgreSQL version
+            with db_manager.connect() as pg_conn:
+                cur = pg_conn.execute("SELECT 1 FROM seen_entries WHERE guid = %s", (guid,))
+                is_new = cur.fetchone() is None
+        
         logger.debug(f"Entry {guid} is_new={is_new}")
         return is_new
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.error(f"Database error checking entry {guid}: {e}")
         raise DatabaseError(f"Failed to check entry: {e}") from e
 
@@ -61,13 +80,26 @@ def mark_seen(conn, guid: str, link: str):
     try:
         if not guid or not link:
             raise ValidationError("GUID and link cannot be empty")
-        conn.execute(
-            "INSERT OR IGNORE INTO seen_entries (guid, link, first_seen) VALUES (?, ?, ?)",
-            (guid, link, time.time()),
-        )
-        conn.commit()
+        
+        db_manager = get_database_manager()
+        
+        if db_manager.db_type == "sqlite":
+            conn.execute(
+                "INSERT OR IGNORE INTO seen_entries (guid, link, first_seen) VALUES (?, ?, ?)",
+                (guid, link, time.time()),
+            )
+            conn.commit()
+        else:
+            # PostgreSQL version
+            with db_manager.connect() as pg_conn:
+                pg_conn.execute(
+                    "INSERT INTO seen_entries (guid, link, first_seen) VALUES (%s, %s, %s) ON CONFLICT (guid) DO NOTHING",
+                    (guid, link, time.time()),
+                )
+                pg_conn.commit()
+        
         logger.debug(f"Marked entry {guid} as seen")
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.error(f"Failed to mark entry {guid} as seen: {e}")
         raise DatabaseError(f"Failed to mark entry: {e}") from e
 
@@ -103,24 +135,36 @@ def fetch_authenticated_feed(url: str) -> str:
 
 def _get_rss_feeds_dir() -> Path:
     """Directory where raw RSS feed XML snapshots are stored."""
-    settings = get_settings()
-    feed_dir = Path(getattr(settings, 'EXPORT_DIR', 'exports')).parent / "rss_feeds"
+    shared_storage = os.getenv("SHARED_STORAGE_PATH")
+    if shared_storage:
+        feed_dir = Path(shared_storage) / "rss-feeds"
+    else:
+        settings = get_settings()
+        feed_dir = Path(getattr(settings, 'EXPORT_DIR', 'exports')).parent / "rss_feeds"
     feed_dir.mkdir(parents=True, exist_ok=True)
     return feed_dir
 
 
 def _get_xml_exports_dir() -> Path:
     """Directory where RSS feed XML exports are stored for catalog building."""
-    xml_dir = Path("data") / "xml_exports"
+    shared_storage = os.getenv("SHARED_STORAGE_PATH")
+    if shared_storage:
+        xml_dir = Path(shared_storage) / "xml-exports"
+    else:
+        xml_dir = Path("data") / "xml_exports"
     xml_dir.mkdir(parents=True, exist_ok=True)
     return xml_dir
 
 
 def _get_periodic_export_dir() -> Path:
     """Directory where periodic RSS feed XML exports are stored for user access."""
-    settings = get_settings()
-    export_dir = Path(settings.EXPORT_DIR)
-    periodic_dir = export_dir / "rss_exports"
+    shared_storage = os.getenv("SHARED_STORAGE_PATH")
+    if shared_storage:
+        periodic_dir = Path(shared_storage) / "exports" / "rss_exports"
+    else:
+        settings = get_settings()
+        export_dir = Path(settings.EXPORT_DIR)
+        periodic_dir = export_dir / "rss_exports"
     periodic_dir.mkdir(parents=True, exist_ok=True)
     return periodic_dir
 
