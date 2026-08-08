@@ -5,51 +5,77 @@ Depends on: ebooklib
     pip install ebooklib
 """
 
-import sqlite3
+import os
 import logging
 from pathlib import Path
 from typing import List, Optional
 from ebooklib import epub
 from core.settings import get_settings
 from core.exceptions import DatabaseError, ValidationError
+from core.database_manager import get_database_manager
 
 logger = logging.getLogger(__name__)
 
 
 def _get_db_path() -> str:
-    """Get the chapters database path from settings."""
+    """Get the chapters database path from settings (SQLite only)."""
+    if os.getenv("DB_TYPE", "sqlite").lower() != "sqlite":
+        raise ValueError("Database path not applicable for PostgreSQL")
     return get_settings().CHAPTERS_DB
 
 
 def _get_export_dir() -> str:
-    """Get the export directory from settings."""
+    """Get the export directory from settings or shared storage."""
+    shared_storage = os.getenv("SHARED_STORAGE_PATH")
+    if shared_storage:
+        return str(Path(shared_storage) / "exports")
     return get_settings().EXPORT_DIR
 
 
 def get_chapters_by_series(db_path: Optional[str] = None) -> dict:
     """Retrieve all chapters grouped by series from database."""
-    if db_path is None:
-        db_path = _get_db_path()
+    db_manager = get_database_manager()
+    
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute("""
-            SELECT series, chapter_label, title, text, extraction_method, fetched_at
-            FROM chapters
-            ORDER BY series, fetched_at
-        """)
+        if db_manager.db_type == "sqlite":
+            if db_path is None:
+                db_path = _get_db_path()
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT series, chapter_label, title, text, extraction_method, fetched_at
+                FROM chapters
+                ORDER BY series, fetched_at
+            """)
+            
+            chapters_by_series = {}
+            for row in cursor:
+                series = row['series'] or 'Unknown'
+                if series not in chapters_by_series:
+                    chapters_by_series[series] = []
+                chapters_by_series[series].append(dict(row))
+            
+            conn.close()
+        else:
+            # PostgreSQL version
+            with db_manager.connect() as conn:
+                cursor = conn.execute("""
+                    SELECT series, chapter_label, title, text, extraction_method, fetched_at
+                    FROM chapters
+                    ORDER BY series, fetched_at
+                """)
+                
+                chapters_by_series = {}
+                for row in cursor.fetchall():
+                    series = row.get('series') or 'Unknown'
+                    if series not in chapters_by_series:
+                        chapters_by_series[series] = []
+                    chapters_by_series[series].append(row)
         
-        chapters_by_series = {}
-        for row in cursor:
-            series = row['series'] or 'Unknown'
-            if series not in chapters_by_series:
-                chapters_by_series[series] = []
-            chapters_by_series[series].append(dict(row))
-        
-        conn.close()
         logger.info(f"Retrieved {sum(len(ch) for ch in chapters_by_series.values())} chapters across {len(chapters_by_series)} series")
         return chapters_by_series
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.error(f"Failed to retrieve chapters from database: {e}")
         raise DatabaseError(f"Failed to retrieve chapters: {e}") from e
 
@@ -166,8 +192,11 @@ def create_epub(series_name: str, chapters: List[dict], output_dir: Optional[str
 
 def export_all_to_epub(db_path: Optional[str] = None, output_dir: Optional[str] = None) -> List[str]:
     """Export all series to EPUB files."""
-    if db_path is None:
+    # Only pass db_path if using SQLite
+    db_manager = get_database_manager()
+    if db_manager.db_type == "sqlite" and db_path is None:
         db_path = _get_db_path()
+    
     if output_dir is None:
         output_dir = _get_export_dir()
     
@@ -192,30 +221,45 @@ def export_all_to_epub(db_path: Optional[str] = None, output_dir: Optional[str] 
 
 def export_series_to_epub(series_name: str, db_path: Optional[str] = None, output_dir: Optional[str] = None) -> str:
     """Export a specific series to EPUB."""
-    if db_path is None:
-        db_path = _get_db_path()
+    db_manager = get_database_manager()
+    
     if output_dir is None:
         output_dir = _get_export_dir()
     
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute("""
-            SELECT series, chapter_label, title, text, extraction_method, fetched_at
-            FROM chapters
-            WHERE series = ?
-            ORDER BY fetched_at
-        """, (series_name,))
-        
-        chapters = [dict(row) for row in cursor]
-        conn.close()
+        if db_manager.db_type == "sqlite":
+            if db_path is None:
+                db_path = _get_db_path()
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT series, chapter_label, title, text, extraction_method, fetched_at
+                FROM chapters
+                WHERE series = ?
+                ORDER BY fetched_at
+            """, (series_name,))
+            
+            chapters = [dict(row) for row in cursor]
+            conn.close()
+        else:
+            # PostgreSQL version
+            with db_manager.connect() as conn:
+                cursor = conn.execute("""
+                    SELECT series, chapter_label, title, text, extraction_method, fetched_at
+                    FROM chapters
+                    WHERE series = %s
+                    ORDER BY fetched_at
+                """, (series_name,))
+                
+                chapters = [row for row in cursor.fetchall()]
         
         if not chapters:
             logger.warning(f"No chapters found for series: {series_name}")
             return None
         
         return create_epub(series_name, chapters, output_dir)
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.error(f"Failed to retrieve chapters for series '{series_name}': {e}")
         raise DatabaseError(f"Failed to retrieve chapters: {e}") from e
 
@@ -231,20 +275,38 @@ def export_selected_chapters_to_epub(series_name: str, chapter_urls: List[str], 
         output_dir = _get_export_dir()
     
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        db_manager = get_database_manager()
         
-        # Build placeholders for the IN clause
-        placeholders = ','.join('?' for _ in chapter_urls)
-        cursor = conn.execute(f"""
-            SELECT series, chapter_label, title, text, extraction_method, fetched_at
-            FROM chapters
-            WHERE series = ? AND url IN ({placeholders})
-            ORDER BY fetched_at
-        """, (series_name, *chapter_urls))
-        
-        chapters = [dict(row) for row in cursor]
-        conn.close()
+        if db_manager.db_type == "sqlite":
+            if db_path is None:
+                db_path = _get_db_path()
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            
+            # Build placeholders for the IN clause
+            placeholders = ','.join('?' for _ in chapter_urls)
+            cursor = conn.execute(f"""
+                SELECT series, chapter_label, title, text, extraction_method, fetched_at
+                FROM chapters
+                WHERE series = ? AND url IN ({placeholders})
+                ORDER BY fetched_at
+            """, (series_name, *chapter_urls))
+            
+            chapters = [dict(row) for row in cursor]
+            conn.close()
+        else:
+            # PostgreSQL version
+            with db_manager.connect() as conn:
+                placeholders = ','.join('%s' for _ in chapter_urls)
+                cursor = conn.execute(f"""
+                    SELECT series, chapter_label, title, text, extraction_method, fetched_at
+                    FROM chapters
+                    WHERE series = %s AND url IN ({placeholders})
+                    ORDER BY fetched_at
+                """, (series_name, *chapter_urls))
+                
+                chapters = [row for row in cursor.fetchall()]
         
         if not chapters:
             logger.warning(f"No chapters found for series: {series_name} with selected URLs")
@@ -254,65 +316,112 @@ def export_selected_chapters_to_epub(series_name: str, chapter_urls: List[str], 
         safe_name = "".join(c for c in series_name if c.isalnum() or c in (' ', '-', '_')).strip() or "Unknown"
         export_label = f"{safe_name} (selected)"
         return create_epub(export_label, chapters, output_dir)
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.error(f"Failed to retrieve selected chapters for series '{series_name}': {e}")
         raise DatabaseError(f"Failed to retrieve selected chapters: {e}") from e
 
 
 def get_series_list(db_path: Optional[str] = None) -> List[str]:
     """Get list of all series from both chapters and series_info."""
-    if db_path is None:
-        db_path = _get_db_path()
+    db_manager = get_database_manager()
+    
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.execute("""
-            SELECT DISTINCT series FROM chapters
-            UNION
-            SELECT DISTINCT series FROM series_info
-            ORDER BY series
-        """)
-        series = [row[0] for row in cursor if row[0]]
-        conn.close()
+        if db_manager.db_type == "sqlite":
+            if db_path is None:
+                db_path = _get_db_path()
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cursor = conn.execute("""
+                SELECT DISTINCT series FROM chapters
+                UNION
+                SELECT DISTINCT series FROM series_info
+                ORDER BY series
+            """)
+            series = [row[0] for row in cursor if row[0]]
+            conn.close()
+        else:
+            # PostgreSQL version
+            with db_manager.connect() as conn:
+                cursor = conn.execute("""
+                    SELECT DISTINCT series FROM chapters
+                    UNION
+                    SELECT DISTINCT series FROM series_info
+                    ORDER BY series
+                """)
+                series = [row[0] for row in cursor.fetchall() if row[0]]
+        
         return series
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.error(f"Failed to get series list: {e}")
         raise DatabaseError(f"Failed to get series list: {e}") from e
 
 
 def get_statistics(db_path: Optional[str] = None) -> dict:
     """Get statistics about stored chapters."""
-    if db_path is None:
-        db_path = _get_db_path()
+    db_manager = get_database_manager()
+    
     try:
-        conn = sqlite3.connect(db_path)
-        
-        # Total chapters
-        cursor = conn.execute("SELECT COUNT(*) FROM chapters")
-        total_chapters = cursor.fetchone()[0]
-        
-        # Total series
-        cursor = conn.execute("SELECT COUNT(DISTINCT series) FROM chapters")
-        total_series = cursor.fetchone()[0]
-        
-        # Chapters by method
-        cursor = conn.execute("""
-            SELECT extraction_method, COUNT(*) 
-            FROM chapters 
-            GROUP BY extraction_method
-        """)
-        by_method = {row[0]: row[1] for row in cursor}
-        
-        # Chapters by series
-        cursor = conn.execute("""
-            SELECT series, COUNT(*) 
-            FROM chapters 
-            GROUP BY series 
-            ORDER BY COUNT(*) DESC
-            LIMIT 10
-        """)
-        by_series = {row[0]: row[1] for row in cursor}
-        
-        conn.close()
+        if db_manager.db_type == "sqlite":
+            if db_path is None:
+                db_path = _get_db_path()
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            
+            # Total chapters
+            cursor = conn.execute("SELECT COUNT(*) FROM chapters")
+            total_chapters = cursor.fetchone()[0]
+            
+            # Total series
+            cursor = conn.execute("SELECT COUNT(DISTINCT series) FROM chapters")
+            total_series = cursor.fetchone()[0]
+            
+            # Chapters by method
+            cursor = conn.execute("""
+                SELECT extraction_method, COUNT(*) 
+                FROM chapters 
+                GROUP BY extraction_method
+            """)
+            by_method = {row[0]: row[1] for row in cursor}
+            
+            # Chapters by series
+            cursor = conn.execute("""
+                SELECT series, COUNT(*) 
+                FROM chapters 
+                GROUP BY series 
+                ORDER BY COUNT(*) DESC
+                LIMIT 10
+            """)
+            by_series = {row[0]: row[1] for row in cursor}
+            
+            conn.close()
+        else:
+            # PostgreSQL version
+            with db_manager.connect() as conn:
+                # Total chapters
+                cursor = conn.execute("SELECT COUNT(*) FROM chapters")
+                total_chapters = cursor.fetchone()[0]
+                
+                # Total series
+                cursor = conn.execute("SELECT COUNT(DISTINCT series) FROM chapters")
+                total_series = cursor.fetchone()[0]
+                
+                # Chapters by method
+                cursor = conn.execute("""
+                    SELECT extraction_method, COUNT(*) 
+                    FROM chapters 
+                    GROUP BY extraction_method
+                """)
+                by_method = {row[0]: row[1] for row in cursor.fetchall()}
+                
+                # Chapters by series
+                cursor = conn.execute("""
+                    SELECT series, COUNT(*) 
+                    FROM chapters 
+                    GROUP BY series 
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 10
+                """)
+                by_series = {row[0]: row[1] for row in cursor.fetchall()}
         
         return {
             'total_chapters': total_chapters,
@@ -320,7 +429,7 @@ def get_statistics(db_path: Optional[str] = None) -> dict:
             'by_method': by_method,
             'by_series': by_series
         }
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.error(f"Failed to get statistics: {e}")
         raise DatabaseError(f"Failed to get statistics: {e}") from e
 
