@@ -4,7 +4,10 @@ on:
   push:
     branches:
       - main
-      - dev
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
@@ -17,7 +20,18 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    if: |
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
     steps:
+      - name: Check if PR is draft
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then
+            echo "Skipping build for draft PR"
+            exit 0
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v5
 
@@ -95,7 +109,7 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -139,19 +153,10 @@ jobs:
           else:
               base = max(main_versions)
 
-          if branch == 'main':
-              # Main releases: 1.0 -> 1.1 -> 1.2
-              new_base = (base[0], base[1] + 1)
-              version = f"{new_base[0]}.{new_base[1]}"
-              suffix = ''
-          else:
-              # Dev pre-releases: 1.1-dev.1, 1.1-dev.2, ...
-              base_str = f"{base[0]}.{base[1]}"
-              dev_re = re.compile(re.escape(base_str) + r'-dev\.(\d+)$')
-              dev_nums = [int(m.group(1)) for t in tags for m in [dev_re.match(t)] if m]
-              n = max(dev_nums) + 1 if dev_nums else 1
-              version = f"{base_str}-dev.{n}"
-              suffix = ' (dev)'
+          # Main releases: 1.0 -> 1.1 -> 1.2
+          new_base = (base[0], base[1] + 1)
+          version = f"{new_base[0]}.{new_base[1]}"
+          suffix = ''
 
           print(f"version={version}")
           print(f"suffix={suffix}", file=sys.stderr)
