@@ -53,3 +53,4 @@ scraper_pid.json
 
 # Reading list exports (user data)
 reading_lists/
+data/xml_exports/
