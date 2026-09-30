@@ -13,6 +13,15 @@ Invoke these skills with `/development-workflow` or `/repo-setup` in any session
 
 See `.devin/rules/REPOSITORY_RULES.md` for detailed repository-specific rules.
 
+## App Isolation (CRITICAL)
+
+Apps hosted under morganwilkinson.com are independent of each other —
+this app must never share databases, rules files, secrets, or other
+backend infrastructure with other apps (e.g. the 3d-printer-workshop
+repo). This app owns its Firebase project (`morganwilkinson-novels`)
+end to end. The only cross-app touchpoint allowed is the orchestrator
+repo (morganwilkinson.com), which hosts the hub and Access config.
+
 ## Python Code Quality Rules
 
 ### F-String Syntax (CRITICAL)
