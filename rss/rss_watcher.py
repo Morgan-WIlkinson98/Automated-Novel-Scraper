@@ -26,7 +26,11 @@ def _get_config():
 def init_db(path="seen_entries.db"):
     """Initialize database for tracking seen RSS entries."""
     db_manager = get_database_manager()
-    
+
+    if db_manager.db_type == "firestore":
+        from data import firestore_store
+        return firestore_store.init_seen()
+
     # Only handle SQLite-specific initialization for backwards compatibility
     if os.getenv("DB_TYPE", "sqlite").lower() == "sqlite":
         try:
@@ -58,8 +62,11 @@ def is_new_entry(conn, guid: str) -> bool:
             raise ValidationError("GUID cannot be empty")
         
         db_manager = get_database_manager()
-        
-        if db_manager.db_type == "sqlite":
+
+        if db_manager.db_type == "firestore":
+            from data import firestore_store
+            return firestore_store.is_new_entry(conn, guid)
+        elif db_manager.db_type == "sqlite":
             cur = conn.execute("SELECT 1 FROM seen_entries WHERE guid = ?", (guid,))
             is_new = cur.fetchone() is None
         else:
@@ -82,8 +89,11 @@ def mark_seen(conn, guid: str, link: str):
             raise ValidationError("GUID and link cannot be empty")
         
         db_manager = get_database_manager()
-        
-        if db_manager.db_type == "sqlite":
+
+        if db_manager.db_type == "firestore":
+            from data import firestore_store
+            return firestore_store.mark_seen(conn, guid, link)
+        elif db_manager.db_type == "sqlite":
             conn.execute(
                 "INSERT OR IGNORE INTO seen_entries (guid, link, first_seen) VALUES (?, ?, ?)",
                 (guid, link, time.time()),

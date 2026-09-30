@@ -6,6 +6,7 @@ site_overrides, storage, politeness
 
 import logging
 import json
+import os
 import re
 import threading
 from urllib.parse import urlparse
@@ -143,12 +144,16 @@ def handle_new_entry(entry, is_import=False):
             )
             
             # Kick off a background sync for the series page metadata
+            # (inline in one-shot runs — daemon threads die at process exit)
             if series_url:
-                threading.Thread(
-                    target=_sync_series_info_async,
-                    args=(series_name, series_url),
-                    daemon=True,
-                ).start()
+                if os.getenv("SERIES_SYNC_INLINE") == "1":
+                    _sync_series_info_async(series_name, series_url)
+                else:
+                    threading.Thread(
+                        target=_sync_series_info_async,
+                        args=(series_name, series_url),
+                        daemon=True,
+                    ).start()
             
             logger.info(f"Saved: {result.title} ({result.method})")
         except DatabaseError as e:

@@ -37,7 +37,11 @@ def _ensure_series_info_columns(conn):
 def init_storage(path=None):
     """Initialize the chapters database."""
     db_manager = get_database_manager()
-    
+
+    if db_manager.db_type == "firestore":
+        from data import firestore_store
+        return firestore_store.init_storage(path)
+
     # Only handle SQLite-specific initialization for backwards compatibility
     if os.getenv("DB_TYPE", "sqlite").lower() == "sqlite":
         if path is None:
@@ -89,7 +93,10 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
         
         db_manager = get_database_manager()
         
-        if db_manager.db_type == "sqlite":
+        if db_manager.db_type == "firestore":
+            from data import firestore_store
+            return firestore_store.save_chapter(conn, url, series, chapter_label, title, text, method)
+        elif db_manager.db_type == "sqlite":
             conn.execute("""
                 INSERT OR IGNORE INTO chapters
                 (url, series, chapter_label, title, text, extraction_method, fetched_at)
@@ -132,8 +139,16 @@ def save_series_info(
             raise ValidationError("Series name cannot be empty")
         
         db_manager = get_database_manager()
-        
-        if db_manager.db_type == "sqlite":
+
+        if db_manager.db_type == "firestore":
+            from data import firestore_store
+            return firestore_store.save_series_info(
+                conn, series, url, synopsis, available_chapters,
+                current_chapter_label, current_chapter_link,
+                latest_chapter_label, latest_chapter_link,
+                reading_list_name, imported_at,
+            )
+        elif db_manager.db_type == "sqlite":
             conn.execute("""
                 INSERT INTO series_info (
                     series, url, synopsis, available_chapters,
@@ -200,8 +215,11 @@ def get_series_info(conn, series: str):
     """Get metadata for a series."""
     try:
         db_manager = get_database_manager()
-        
-        if db_manager.db_type == "sqlite":
+
+        if db_manager.db_type == "firestore":
+            from data import firestore_store
+            return firestore_store.get_series_info(conn, series)
+        elif db_manager.db_type == "sqlite":
             cursor = conn.execute(
                 """SELECT url, synopsis, available_chapters,
                           current_chapter_label, current_chapter_link,

@@ -18,7 +18,10 @@ class Settings:
     
     # Default values
     DEFAULTS: Dict[str, Any] = {
-        'RSS_FEED_URL': 'https://rssnovelupdates.com/rss.php?uid=19860&unq=57032833df889&type=0&lid=local',
+        # Keyed personal feed URL — set via env (NU_RSS_FEED_URL secret) or
+        # config.py. Never commit a real URL here.
+        'RSS_FEED_URL': None,
+        'FIREBASE_SERVICE_ACCOUNT_JSON': None,
         'NOVELUPDATES_USERNAME': None,
         'NOVELUPDATES_PASSWORD': None,
         'NOVELUPDATES_COOKIES': None,
@@ -88,7 +91,10 @@ class Settings:
                     except ValueError:
                         logger.warning(f"Cannot convert env var {key} to int, using value as string")
                         setattr(self, key, env_value)
-                elif isinstance(default_value, (dict, list)):
+                elif isinstance(default_value, (dict, list)) or (
+                    key in ('NOVELUPDATES_COOKIES', 'EXTRA_HTTP_HEADERS')
+                    and env_value.strip().startswith('{')
+                ):
                     import json
                     try:
                         setattr(self, key, json.loads(env_value))
@@ -153,7 +159,8 @@ class Settings:
     def _get_comment(self, key: str) -> Optional[str]:
         """Get comment for a config key."""
         comments = {
-            'RSS_FEED_URL': 'NovelUpdates RSS Feed URL',
+            'RSS_FEED_URL': 'NovelUpdates RSS Feed URL (keyed personal feed — keep private)',
+            'FIREBASE_SERVICE_ACCOUNT_JSON': 'Service account JSON for Firestore (cloud poller mode)',
             'NOVELUPDATES_USERNAME': 'NovelUpdates Authentication (if required)',
             'NOVELUPDATES_PASSWORD': 'Set to your password (kept private)',
             'NOVELUPDATES_COOKIES': 'Cookie authentication (if you have session cookies)',

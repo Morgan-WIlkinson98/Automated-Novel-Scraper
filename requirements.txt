@@ -9,3 +9,4 @@ flask
 playwright
 pywebview
 psycopg2-binary
+google-cloud-firestore

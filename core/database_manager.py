@@ -36,12 +36,16 @@ class DatabaseManager:
             self.database = kwargs.get("database", "novel_scraper")
             self.user = kwargs.get("user", "postgres")
             self.password = kwargs.get("password", "")
+        elif self.db_type == "firestore":
+            pass  # no connection params — data.firestore_store owns the client
         else:
             raise ValueError(f"Unsupported database type: {db_type}")
     
     @contextmanager
     def connect(self):
         """Context manager for database connections."""
+        if self.db_type == "firestore":
+            raise DatabaseError("Firestore has no connect(); use data.firestore_store")
         conn = None
         try:
             if self.db_type == "sqlite":
@@ -130,6 +134,9 @@ def get_database_manager() -> DatabaseManager:
     """Get configured database manager based on environment variables."""
     db_type = os.getenv("DB_TYPE", "sqlite").lower()
     
+    if db_type == "firestore":
+        return DatabaseManager(db_type="firestore")
+
     if db_type == "postgresql":
         return DatabaseManager(
             db_type="postgresql",

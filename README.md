@@ -297,6 +297,52 @@ def quality_check(text: str, min_chars: int = 500, min_paragraphs: int = 3) -> b
     # Adjust minimum character count and paragraph count
 ```
 
+## Cloud Mode (Scheduled Poller)
+
+The app can run without any always-on host: a GitHub Actions workflow
+(`.github/workflows/poll.yml`) polls the RSS feed every 30 minutes and
+writes results to **Firestore** — the same project that backs
+morganwilkinson.com's workshop apps. The site's `/apps/novels` page reads
+that data client-side, so nothing scrapes from Cloudflare
+infrastructure.
+
+```
+GitHub Actions cron → python poller.py (single pass) → Firestore
+                                                          ↑
+                                          browser reads (Access-gated)
+```
+
+### Required env / Actions secrets
+
+| Env var | Secret | Purpose |
+|---|---|---|
+| `DB_TYPE=firestore` | — | Selects the Firestore backend |
+| `RSS_FEED_URL` | `NU_RSS_FEED_URL` | Keyed personal NU feed URL |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | `FIREBASE_SERVICE_ACCOUNT_JSON` | GCP service account with Firestore access |
+| `NOVELUPDATES_COOKIES` | `NU_COOKIES` | Optional JSON dict if the feed needs auth |
+| `SERIES_SYNC_INLINE=1` | — | Set by the workflow (no daemon threads in a one-shot run) |
+| `EXPORT_DIR` | — | Set to `$RUNNER_TEMP/exports` in the workflow |
+
+### Firestore layout
+
+- `novels/{slug}` — series docs (`name`, `url`, `synopsis`, `latestLabel`,
+  `latestLink`, `chapterCount`, `lastSynced`, …)
+- `novels/{slug}/chapters/{sha256(url)}` — chapter docs (`title`, `label`,
+  `text`, `method`, `fetchedAt`) — insert-if-absent, so runs are idempotent
+- `novels_seen/{sha256(guid)}` — RSS dedup (replaces `seen_entries.db`)
+- `novels_meta/state` — last run status for the site dashboard
+
+### Migrating existing data
+
+```bash
+export FIREBASE_SERVICE_ACCOUNT_JSON="$(cat service-account.json)"
+python tools/import_sqlite.py --dry-run          # count what would migrate
+python tools/import_sqlite.py                    # write it to Firestore
+```
+
+Local/desktop mode is unchanged — `DB_TYPE` still defaults to `sqlite`
+and `main.py`/`web_ui.py` work exactly as before.
+
 ## Database Schema
 
 ### seen_entries.db
