@@ -8,7 +8,7 @@ Google OAuth tokens which bypass Firestore security rules, so the site
 can keep simple `allow read: if true` rules while writes stay locked to
 the key in GitHub secrets.
 
-Collections (Firestore project morganwilkinson-novels):
+Collections (Firestore project mw-novels):
     novels/{slug}                  — one doc per series
     novels/{slug}/chapters/{id}    — one doc per chapter (id = sha256(url))
     novels_seen/{guid_hash}        — RSS dedup (replaces seen_entries.db)

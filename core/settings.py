@@ -25,7 +25,7 @@ class Settings:
         # never commit). SA requests bypass Firestore rules; the site
         # reads via REST with public-read rules.
         'FIREBASE_SERVICE_ACCOUNT_JSON': None,
-        'FIRESTORE_PROJECT': 'morganwilkinson-novels',
+        'FIRESTORE_PROJECT': 'mw-novels',
         'NOVELUPDATES_USERNAME': None,
         'NOVELUPDATES_PASSWORD': None,
         'NOVELUPDATES_COOKIES': None,

@@ -18,7 +18,7 @@ See `.devin/rules/REPOSITORY_RULES.md` for detailed repository-specific rules.
 Apps hosted under morganwilkinson.com are independent of each other —
 this app must never share databases, rules files, secrets, or other
 backend infrastructure with other apps (e.g. the 3d-printer-workshop
-repo). This app owns its Firebase project (`morganwilkinson-novels`)
+repo). This app owns its Firebase project (`mw-novels`)
 end to end. The only cross-app touchpoint allowed is the orchestrator
 repo (morganwilkinson.com), which hosts the hub and Access config.
 
