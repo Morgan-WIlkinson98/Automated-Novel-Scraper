@@ -318,7 +318,7 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
 |---|---|---|
 | `DB_TYPE=firestore` | — | Selects the Firestore backend |
 | `RSS_FEED_URL` | `NU_RSS_FEED_URL` | Keyed personal NU feed URL |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | `FIREBASE_SERVICE_ACCOUNT_JSON` | GCP service account with Firestore access |
+| `FIREBASE_REFRESH_TOKEN` | `FIREBASE_REFRESH_TOKEN` | Anonymous Firebase user's refresh token (mint once via Identity Toolkit `accounts:signUp`; rules gate writes to that uid) |
 | `NOVELUPDATES_COOKIES` | `NU_COOKIES` | Optional JSON dict if the feed needs auth |
 | `SERIES_SYNC_INLINE=1` | — | Set by the workflow (no daemon threads in a one-shot run) |
 | `EXPORT_DIR` | — | Set to `$RUNNER_TEMP/exports` in the workflow |
@@ -335,7 +335,7 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
 ### Migrating existing data
 
 ```bash
-export FIREBASE_SERVICE_ACCOUNT_JSON="$(cat service-account.json)"
+export FIREBASE_REFRESH_TOKEN="<anon-user refresh token>"
 python tools/import_sqlite.py --dry-run          # count what would migrate
 python tools/import_sqlite.py                    # write it to Firestore
 ```

@@ -7,7 +7,7 @@ them through data.firestore_store — same dedup keys the poller uses, so
 migrated data won't be re-fetched.
 
 Usage:
-    export FIREBASE_SERVICE_ACCOUNT_JSON="$(cat service-account.json)"
+    export FIREBASE_REFRESH_TOKEN="<anon-user refresh token>"
     python tools/import_sqlite.py \
         --chapters-db chapters.db --seen-db seen_entries.db [--dry-run]
 """
@@ -49,10 +49,9 @@ def main() -> int:
         logger.error(f"Chapters database not found: {args.chapters_db}")
         return 1
 
+    from data import firestore_store as fs
     store = None
-    fs = None
     if not args.dry_run:
-        from data import firestore_store as fs
         store = fs.init_storage()
 
     chapters = sqlite3.connect(args.chapters_db)
@@ -61,25 +60,40 @@ def main() -> int:
     # --- series_info ---
     if _table_exists(chapters, "series_info"):
         cols = _series_columns(chapters)
-        n = 0
+        # Series actually holding chapters — noise feed rows get skipped
+        # unless they're on the reading list or have real metadata.
+        have_chapters = {r[0] for r in chapters.execute("SELECT DISTINCT series FROM chapters")}
+        docs, skipped = [], 0
         for row in chapters.execute("SELECT * FROM series_info"):
+            has_list = "reading_list_name" in cols and row["reading_list_name"]
+            if row["series"] not in have_chapters and not has_list and not row["synopsis"]:
+                skipped += 1
+                continue
+            slug = fs._slugify(row["series"])
             info = {
-                "series": row["series"],
+                "name": row["series"],
+                "slug": slug,
                 "url": row["url"],
                 "synopsis": row["synopsis"],
-                "available_chapters": row["available_chapters"],
+                "availableChapters": row["available_chapters"],
             }
-            for col in (
-                "current_chapter_label", "current_chapter_link",
-                "latest_chapter_label", "latest_chapter_link",
-                "reading_list_name", "imported_at",
-            ):
-                if col in cols:
-                    info[col] = row[col]
-            if store:
-                fs.save_series_info(store, **info)
-            n += 1
-        logger.info(f"series_info: {n} rows {'(dry run)' if not store else 'migrated'}")
+            col_map = {
+                "current_chapter_label": "currentLabel",
+                "current_chapter_link": "currentLink",
+                "latest_chapter_label": "latestLabel",
+                "latest_chapter_link": "latestLink",
+                "reading_list_name": "listName",
+                "imported_at": "importedAt",
+            }
+            for col, field in col_map.items():
+                if col in cols and row[col] is not None:
+                    info[field] = row[col]
+            docs.append((f"novels/{slug}", info))
+        if store:
+            fs.bulk_upsert(docs)
+        logger.info(
+            f"series_info: {len(docs)} rows {'(dry run)' if not store else 'migrated'}"
+            f", {skipped} noise rows skipped")
     else:
         logger.info("No series_info table — skipping")
 
@@ -98,13 +112,16 @@ def main() -> int:
 
     # --- seen_entries ---
     if os.path.exists(args.seen_db):
+        import time as _time
         seen = sqlite3.connect(args.seen_db)
-        n = 0
-        for row in seen.execute("SELECT guid, link FROM seen_entries"):
-            if store:
-                fs.mark_seen(store, row[0], row[1])
-            n += 1
-        logger.info(f"seen_entries: {n} rows {'(dry run)' if not store else 'migrated'}")
+        docs = [
+            (f"{fs.SEEN_COL}/{fs._hash(row[0])}",
+             {"guid": row[0], "link": row[1], "firstSeen": _time.time()})
+            for row in seen.execute("SELECT guid, link FROM seen_entries")
+        ]
+        if store:
+            fs.bulk_upsert(docs)
+        logger.info(f"seen_entries: {len(docs)} rows {'(dry run)' if not store else 'migrated'}")
     else:
         logger.info(f"No seen database at {args.seen_db} — skipping")
 

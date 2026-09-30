@@ -2,8 +2,10 @@
 firestore_store.py
 Firestore storage backend for cloud mode (DB_TYPE=firestore).
 
-Used by the GitHub Actions poller (poller.py). Reads/writes go through a
-service account supplied via the FIREBASE_SERVICE_ACCOUNT_JSON env var.
+Used by the GitHub Actions poller (poller.py). Authenticates as a
+dedicated anonymous Firebase user: FIREBASE_REFRESH_TOKEN is exchanged
+for an idToken each run; Firestore rules only allow that one uid to
+write, so no service account / GCP console step is needed.
 
 Collections (Firestore project a-3d-printer-workshop):
     novels/{slug}                  — one doc per series
@@ -16,12 +18,13 @@ Cloudflare Access; `novels_seen` is poller-internal.
 """
 
 import hashlib
-import json
 import logging
 import re
 import time
 import unicodedata
 from typing import Optional
+
+import requests
 
 from core.exceptions import DatabaseError, ValidationError
 from core.settings import get_settings
@@ -33,44 +36,65 @@ SEEN_COL = "novels_seen"
 META_COL = "novels_meta"
 META_DOC = "state"
 
-_client = None
+_DOCS_ROOT = (
+    "https://firestore.googleapis.com/v1/projects/{project}"
+    "/databases/(default)/documents"
+)
+_TOKEN_URL = "https://securetoken.googleapis.com/v1/token"
+_TOKEN = {"value": None, "expires_at": 0}
 
 
-def _get_client():
-    """Lazily build the Firestore client from the service-account env var."""
-    global _client
-    if _client is not None:
-        return _client
+def _project() -> str:
+    return get_settings().FIRESTORE_PROJECT
+
+
+def _id_token() -> str:
+    """Exchange the stored refresh token for a fresh idToken (cached ~1h)."""
+    if _TOKEN["value"] and time.time() < _TOKEN["expires_at"] - 300:
+        return _TOKEN["value"]
+
+    settings = get_settings()
+    refresh = settings.FIREBASE_REFRESH_TOKEN
+    api_key = settings.FIREBASE_API_KEY
+    if not refresh:
+        raise DatabaseError("FIREBASE_REFRESH_TOKEN is not set")
+    if not api_key:
+        raise DatabaseError("FIREBASE_API_KEY is not set")
     try:
-        from google.cloud import firestore
-        from google.oauth2 import service_account
-    except ImportError as e:
-        raise DatabaseError(
-            "google-cloud-firestore is not installed (pip install google-cloud-firestore)"
-        ) from e
-    raw = get_settings().FIREBASE_SERVICE_ACCOUNT_JSON
-    if not raw:
-        raise DatabaseError("FIREBASE_SERVICE_ACCOUNT_JSON is not set")
-    try:
-        info = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise DatabaseError(f"FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON: {e}") from e
-    try:
-        creds = service_account.Credentials.from_service_account_info(info)
-        _client = firestore.Client(project=info.get("project_id"), credentials=creds)
-    except Exception as e:
-        raise DatabaseError(f"Failed to create Firestore client: {e}") from e
-    return _client
+        resp = requests.post(
+            _TOKEN_URL,
+            params={"key": api_key},
+            data={"grant_type": "refresh_token", "refresh_token": refresh},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _TOKEN["value"] = data["id_token"]
+        _TOKEN["expires_at"] = time.time() + int(data.get("expires_in", 3600))
+        return _TOKEN["value"]
+    except requests.RequestException as e:
+        raise DatabaseError(f"Firebase token exchange failed: {e}") from e
+    except (KeyError, ValueError) as e:
+        raise DatabaseError(f"Bad Firebase token response: {e}") from e
 
 
-def _server_timestamp():
-    from google.cloud import firestore
-    return firestore.SERVER_TIMESTAMP
+def _req(method: str, path: str, **kwargs) -> requests.Response:
+    """Authed request against the documents API. `path` is relative to
+    the documents root, or ':commit'."""
+    headers = kwargs.pop("headers", {})
+    headers["Authorization"] = f"Bearer {_id_token()}"
+    resp = requests.request(
+        method, f"{_DOCS_ROOT.format(project=_project())}/{path}",
+        headers=headers, timeout=30, **kwargs,
+    )
+    return resp
 
 
-def _increment(n: int):
-    from google.cloud import firestore
-    return firestore.Increment(n)
+def _doc_name(path: str) -> str:
+    """Full resource name for commit writes."""
+    return (
+        f"projects/{_project()}/databases/(default)/documents/{path}"
+    )
 
 
 def _hash(value: str) -> str:
@@ -86,16 +110,81 @@ def _slugify(name: str) -> str:
     return slug or "unknown"
 
 
+def _to_field(v):
+    """Python scalar/list/dict → Firestore REST field value."""
+    if v is None:
+        return {"nullValue": None}
+    if isinstance(v, bool):
+        return {"booleanValue": v}
+    if isinstance(v, int):
+        return {"integerValue": str(v)}
+    if isinstance(v, float):
+        return {"doubleValue": v}
+    if isinstance(v, str):
+        return {"stringValue": v}
+    if isinstance(v, list):
+        return {"arrayValue": {"values": [_to_field(x) for x in v]}}
+    if isinstance(v, dict):
+        return {"mapValue": {"fields": {k: _to_field(x) for k, x in v.items()}}}
+    raise ValidationError(f"Unsupported field type: {type(v)}")
+
+
+def _fields(data: dict) -> dict:
+    return {k: _to_field(v) for k, v in data.items()}
+
+
+def _from_field(v):
+    """Firestore REST field value → Python scalar."""
+    if "stringValue" in v:
+        return v["stringValue"]
+    if "integerValue" in v:
+        return int(v["integerValue"])
+    if "doubleValue" in v:
+        return v["doubleValue"]
+    if "booleanValue" in v:
+        return v["booleanValue"]
+    if "nullValue" in v:
+        return None
+    if "timestampValue" in v:
+        return v["timestampValue"]
+    if "arrayValue" in v:
+        return [_from_field(x) for x in v.get("arrayValue", {}).get("values", [])]
+    if "mapValue" in v:
+        return {k: _from_field(x) for k, x in v.get("mapValue", {}).get("fields", {}).items()}
+    return None
+
+
+def _iso_now() -> str:
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def init_storage(path=None):
-    """Return the Firestore client (signature-compatible with storage.init_storage)."""
-    client = _get_client()
-    logger.info("Firestore storage initialized")
-    return client
+    """Validate credentials + return the REST store handle (the settings
+    object — all calls go through the module's cached token)."""
+    _id_token()  # fail fast if the refresh token is bad
+    logger.info("Firestore storage initialized (REST, uid-scoped write)")
+    return _get_client_sentinel()
+
+
+class _ClientSentinel:
+    """Opaque handle so call sites keep the same (conn, ...) signature."""
+
+    def __repr__(self):
+        return "<FirestoreREST>"
+
+
+_SENTINEL = _ClientSentinel()
+
+
+def _get_client_sentinel():
+    return _SENTINEL
 
 
 def init_seen():
-    """Alias for init_storage — seen-entries share the same client."""
-    return _get_client()
+    """Alias for init_storage — seen-entries share the same store."""
+    _id_token()
+    return _SENTINEL
 
 
 def is_new_entry(conn, guid: str) -> bool:
@@ -103,11 +192,18 @@ def is_new_entry(conn, guid: str) -> bool:
     try:
         if not guid:
             raise ValidationError("GUID cannot be empty")
-        doc = conn.collection(SEEN_COL).document(_hash(guid)).get()
-        is_new = not doc.exists
+        resp = _req("GET", f"{SEEN_COL}/{_hash(guid)}")
+        if resp.status_code == 404:
+            is_new = True
+        elif resp.ok:
+            is_new = False
+        else:
+            raise DatabaseError(f"Firestore read failed {resp.status_code}: {resp.text[:200]}")
         logger.debug(f"Entry {guid} is_new={is_new}")
         return is_new
     except ValidationError:
+        raise
+    except DatabaseError:
         raise
     except Exception as e:
         logger.error(f"Firestore error checking entry {guid}: {e}")
@@ -119,11 +215,15 @@ def mark_seen(conn, guid: str, link: str):
     try:
         if not guid or not link:
             raise ValidationError("GUID and link cannot be empty")
-        conn.collection(SEEN_COL).document(_hash(guid)).set(
-            {"guid": guid, "link": link, "firstSeen": time.time()}, merge=True
-        )
+        resp = _req("PATCH", f"{SEEN_COL}/{_hash(guid)}", json={
+            "fields": _fields({"guid": guid, "link": link, "firstSeen": time.time()})
+        })
+        if not resp.ok:
+            raise DatabaseError(f"Firestore write failed {resp.status_code}: {resp.text[:200]}")
         logger.debug(f"Marked entry {guid} as seen")
     except ValidationError:
+        raise
+    except DatabaseError:
         raise
     except Exception as e:
         logger.error(f"Failed to mark entry {guid}: {e}")
@@ -138,13 +238,13 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
         if not text or not isinstance(text, str):
             raise ValidationError("Text cannot be empty")
 
-        from google.api_core.exceptions import AlreadyExists
-
         slug = _slugify(series)
-        series_ref = conn.collection(SERIES_COL).document(slug)
-        chapter_ref = series_ref.collection("chapters").document(_hash(url))
-        try:
-            chapter_ref.create({
+
+        # Insert-if-absent: POST to the subcollection errors 409 on dupes
+        resp = _req(
+            "POST", f"{SERIES_COL}/{slug}/chapters",
+            params={"documentId": _hash(url)},
+            json={"fields": _fields({
                 "url": url,
                 "series": series,
                 "seriesSlug": slug,
@@ -153,20 +253,64 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
                 "text": text,
                 "method": method or "",
                 "fetchedAt": time.time(),
-            })
-        except AlreadyExists:
+            })},
+        )
+        if resp.status_code == 409:
             logger.debug(f"Chapter already stored, skipping: {url}")
             return
+        if not resp.ok:
+            raise DatabaseError(
+                f"Firestore chapter write failed {resp.status_code}: {resp.text[:200]}")
 
-        series_ref.set({
-            "name": series,
-            "slug": slug,
-            "chapterCount": _increment(1),
-            "updatedAt": _server_timestamp(),
-        }, merge=True)
+        # Bump the series doc: merge identity fields + increment count
+        resp = _req("POST", ":commit", json={"writes": [
+            {
+                "update": {
+                    "name": _doc_name(f"{SERIES_COL}/{slug}"),
+                    "fields": _fields({"name": series, "slug": slug}),
+                },
+                "updateMask": {"fieldPaths": ["name", "slug"]},
+                "currentDocument": {"exists": False},
+            },
+            {
+                "transform": {
+                    "document": _doc_name(f"{SERIES_COL}/{slug}"),
+                    "fieldTransforms": [
+                        {"fieldPath": "chapterCount", "increment": {"integerValue": "1"}},
+                        {"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"},
+                    ],
+                }
+            },
+        ]})
+        # If the series doc already exists the first write fails the batch;
+        # retry with the update-write unconditional instead.
+        if not resp.ok:
+            resp = _req("POST", ":commit", json={"writes": [
+                {
+                    "update": {
+                        "name": _doc_name(f"{SERIES_COL}/{slug}"),
+                        "fields": _fields({"name": series, "slug": slug}),
+                    },
+                    "updateMask": {"fieldPaths": ["name", "slug"]},
+                },
+                {
+                    "transform": {
+                        "document": _doc_name(f"{SERIES_COL}/{slug}"),
+                        "fieldTransforms": [
+                            {"fieldPath": "chapterCount", "increment": {"integerValue": "1"}},
+                            {"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"},
+                        ],
+                    }
+                },
+            ]})
+        if not resp.ok:
+            raise DatabaseError(
+                f"Firestore series update failed {resp.status_code}: {resp.text[:200]}")
 
         logger.info(f"Saved chapter: {title} ({method})")
     except ValidationError:
+        raise
+    except DatabaseError:
         raise
     except Exception as e:
         logger.error(f"Failed to save chapter {url}: {e}")
@@ -192,7 +336,7 @@ def save_series_info(
             raise ValidationError("Series name cannot be empty")
 
         slug = _slugify(series)
-        data = {"name": series, "slug": slug, "lastSynced": _server_timestamp()}
+        data = {"name": series, "slug": slug, "lastSynced": _iso_now()}
         field_map = {
             "url": url,
             "synopsis": synopsis,
@@ -205,9 +349,16 @@ def save_series_info(
             "importedAt": imported_at,
         }
         data.update({k: v for k, v in field_map.items() if v is not None})
-        conn.collection(SERIES_COL).document(slug).set(data, merge=True)
+        params = [("updateMask.fieldPaths", k) for k in data.keys()]
+        resp = _req("PATCH", f"{SERIES_COL}/{slug}", params=params,
+                    json={"fields": _fields(data)})
+        if not resp.ok:
+            raise DatabaseError(
+                f"Firestore series write failed {resp.status_code}: {resp.text[:200]}")
         logger.info(f"Saved series info for: {series}")
     except ValidationError:
+        raise
+    except DatabaseError:
         raise
     except Exception as e:
         logger.error(f"Failed to save series info for {series}: {e}")
@@ -219,27 +370,58 @@ def get_series_info(conn, series: str):
     try:
         if not series:
             raise ValidationError("Series name cannot be empty")
-        doc = conn.collection(SERIES_COL).document(_slugify(series)).get()
-        return doc.to_dict() if doc.exists else {}
+        resp = _req("GET", f"{SERIES_COL}/{_slugify(series)}")
+        if resp.status_code == 404:
+            return {}
+        if not resp.ok:
+            raise DatabaseError(f"Firestore read failed {resp.status_code}: {resp.text[:200]}")
+        return {k: _from_field(v) for k, v in resp.json().get("fields", {}).items()}
     except ValidationError:
+        raise
+    except DatabaseError:
         raise
     except Exception as e:
         logger.error(f"Failed to get series info for {series}: {e}")
         raise DatabaseError(f"Failed to get series info: {e}") from e
 
 
+def bulk_upsert(docs):
+    """Batch-write docs via the commit API — docs is a list of
+    (doc_path, {field: value}) pairs. Upserts, no per-doc dedup —
+    intended for the one-off migration where speed beats delicacy.
+    Returns number of docs written."""
+    written = 0
+    for i in range(0, len(docs), 400):
+        chunk = docs[i:i + 400]
+        writes = [
+            {"update": {"name": _doc_name(path), "fields": _fields(fields)}}
+            for path, fields in chunk
+        ]
+        resp = _req("POST", ":commit", json={"writes": writes})
+        if not resp.ok:
+            raise DatabaseError(
+                f"Firestore bulk commit failed {resp.status_code}: {resp.text[:300]}")
+        written += len(chunk)
+        logger.info(f"Bulk wrote {written}/{len(docs)} docs")
+    return written
+
+
 def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: float = 0.0, run_url: str = None):
     """Record the outcome of a poller run for the site dashboard."""
     try:
-        conn.collection(META_COL).document(META_DOC).set({
-            "lastPollAt": _server_timestamp(),
+        resp = _req("PATCH", f"{META_COL}/{META_DOC}", json={"fields": _fields({
+            "lastPollAt": _iso_now(),
             "lastStatus": status,
             "processed": processed,
             "errors": (errors or [])[-10:],
             "durationS": duration_s,
             "runUrl": run_url or "",
-        })
+        })})
+        if not resp.ok:
+            raise DatabaseError(f"Firestore meta write failed {resp.status_code}: {resp.text[:200]}")
         logger.info(f"Saved run meta: {status} ({processed} processed)")
+    except DatabaseError:
+        raise
     except Exception as e:
         logger.error(f"Failed to save run meta: {e}")
         raise DatabaseError(f"Failed to save run meta: {e}") from e

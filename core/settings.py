@@ -21,7 +21,12 @@ class Settings:
         # Keyed personal feed URL — set via env (NU_RSS_FEED_URL secret) or
         # config.py. Never commit a real URL here.
         'RSS_FEED_URL': None,
-        'FIREBASE_SERVICE_ACCOUNT_JSON': None,
+        # Cloud poller auth: dedicated anonymous Firebase user. The refresh
+        # token is exchanged for an idToken each run; Firestore rules gate
+        # writes to that one uid. Public web API key is safe to default.
+        'FIREBASE_API_KEY': 'AIzaSyCSeVfGBQDuj-3tKfcjfBRaojNSigyZopM',
+        'FIREBASE_REFRESH_TOKEN': None,
+        'FIRESTORE_PROJECT': 'a-3d-printer-workshop',
         'NOVELUPDATES_USERNAME': None,
         'NOVELUPDATES_PASSWORD': None,
         'NOVELUPDATES_COOKIES': None,
@@ -160,7 +165,9 @@ class Settings:
         """Get comment for a config key."""
         comments = {
             'RSS_FEED_URL': 'NovelUpdates RSS Feed URL (keyed personal feed — keep private)',
-            'FIREBASE_SERVICE_ACCOUNT_JSON': 'Service account JSON for Firestore (cloud poller mode)',
+            'FIREBASE_API_KEY': 'Firebase web API key (public — embedded in the site anyway)',
+            'FIREBASE_REFRESH_TOKEN': 'Anonymous Firebase refresh token (cloud poller write identity)',
+            'FIRESTORE_PROJECT': 'Firestore project id',
             'NOVELUPDATES_USERNAME': 'NovelUpdates Authentication (if required)',
             'NOVELUPDATES_PASSWORD': 'Set to your password (kept private)',
             'NOVELUPDATES_COOKIES': 'Cookie authentication (if you have session cookies)',

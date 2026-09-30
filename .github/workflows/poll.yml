@@ -46,7 +46,7 @@ jobs:
           DB_TYPE: firestore
           RSS_FEED_URL: ${{ secrets.NU_RSS_FEED_URL }}
           NOVELUPDATES_COOKIES: ${{ secrets.NU_COOKIES }}
-          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_REFRESH_TOKEN: ${{ secrets.FIREBASE_REFRESH_TOKEN }}
           SERIES_SYNC_INLINE: '1'
           EXPORT_DIR: ${{ runner.temp }}/exports
         run: python poller.py

@@ -5,4 +5,3 @@ readability-lxml
 beautifulsoup4
 lxml
 playwright
-google-cloud-firestore

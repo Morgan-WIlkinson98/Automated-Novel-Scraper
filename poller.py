@@ -9,7 +9,8 @@ run metadata in Firestore, then exit. No daemon loop.
 Required env (see .github/workflows/poll.yml):
     DB_TYPE=firestore
     RSS_FEED_URL                    — keyed personal feed (Actions secret)
-    FIREBASE_SERVICE_ACCOUNT_JSON   — SA JSON for the Firestore project
+    FIREBASE_REFRESH_TOKEN          — dedicated anonymous Firebase user
+                                      (Actions secret; see README → Cloud Mode)
 Optional:
     NOVELUPDATES_COOKIES            — JSON dict of session cookies
     SERIES_SYNC_INLINE=1            — run series-page sync inline (workflow sets this)
@@ -36,8 +37,8 @@ def main() -> int:
     if not settings.RSS_FEED_URL:
         logger.error("RSS_FEED_URL is not set")
         return 2
-    if not settings.FIREBASE_SERVICE_ACCOUNT_JSON:
-        logger.error("FIREBASE_SERVICE_ACCOUNT_JSON is not set")
+    if not settings.FIREBASE_REFRESH_TOKEN:
+        logger.error("FIREBASE_REFRESH_TOKEN is not set")
         return 2
 
     from data import firestore_store
