@@ -21,12 +21,11 @@ class Settings:
         # Keyed personal feed URL — set via env (NU_RSS_FEED_URL secret) or
         # config.py. Never commit a real URL here.
         'RSS_FEED_URL': None,
-        # Cloud poller auth: dedicated anonymous Firebase user. The refresh
-        # token is exchanged for an idToken each run; Firestore rules gate
-        # writes to that one uid. Public web API key is safe to default.
-        'FIREBASE_API_KEY': 'AIzaSyCSeVfGBQDuj-3tKfcjfBRaojNSigyZopM',
-        'FIREBASE_REFRESH_TOKEN': None,
-        'FIRESTORE_PROJECT': 'a-3d-printer-workshop',
+        # Cloud poller auth: GCP service-account JSON (env/secret only —
+        # never commit). SA requests bypass Firestore rules; the site
+        # reads via REST with public-read rules.
+        'FIREBASE_SERVICE_ACCOUNT_JSON': None,
+        'FIRESTORE_PROJECT': 'morganwilkinson-novels',
         'NOVELUPDATES_USERNAME': None,
         'NOVELUPDATES_PASSWORD': None,
         'NOVELUPDATES_COOKIES': None,
@@ -165,8 +164,7 @@ class Settings:
         """Get comment for a config key."""
         comments = {
             'RSS_FEED_URL': 'NovelUpdates RSS Feed URL (keyed personal feed — keep private)',
-            'FIREBASE_API_KEY': 'Firebase web API key (public — embedded in the site anyway)',
-            'FIREBASE_REFRESH_TOKEN': 'Anonymous Firebase refresh token (cloud poller write identity)',
+            'FIREBASE_SERVICE_ACCOUNT_JSON': 'GCP service-account JSON (cloud poller write credential)',
             'FIRESTORE_PROJECT': 'Firestore project id',
             'NOVELUPDATES_USERNAME': 'NovelUpdates Authentication (if required)',
             'NOVELUPDATES_PASSWORD': 'Set to your password (kept private)',

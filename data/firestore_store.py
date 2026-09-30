@@ -2,22 +2,25 @@
 firestore_store.py
 Firestore storage backend for cloud mode (DB_TYPE=firestore).
 
-Used by the GitHub Actions poller (poller.py). Authenticates as a
-dedicated anonymous Firebase user: FIREBASE_REFRESH_TOKEN is exchanged
-for an idToken each run; Firestore rules only allow that one uid to
-write, so no service account / GCP console step is needed.
+Used by the GitHub Actions poller (poller.py). Authenticates with a
+GCP service account (FIREBASE_SERVICE_ACCOUNT_JSON) — SA requests use
+Google OAuth tokens which bypass Firestore security rules, so the site
+can keep simple `allow read: if true` rules while writes stay locked to
+the key in GitHub secrets.
 
-Collections (Firestore project a-3d-printer-workshop):
+Collections (Firestore project morganwilkinson-novels):
     novels/{slug}                  — one doc per series
     novels/{slug}/chapters/{id}    — one doc per chapter (id = sha256(url))
     novels_seen/{guid_hash}        — RSS dedup (replaces seen_entries.db)
     novels_meta/state              — latest poller run status
 
-The companion site app reads `novels` + `novels_meta` client-side behind
-Cloudflare Access; `novels_seen` is poller-internal.
+The companion site app reads `novels` + `novels_meta` client-side via
+the Firestore REST API behind Cloudflare Access; `novels_seen` is
+poller-internal.
 """
 
 import hashlib
+import json
 import logging
 import re
 import time
@@ -40,49 +43,49 @@ _DOCS_ROOT = (
     "https://firestore.googleapis.com/v1/projects/{project}"
     "/databases/(default)/documents"
 )
-_TOKEN_URL = "https://securetoken.googleapis.com/v1/token"
-_TOKEN = {"value": None, "expires_at": 0}
+_SCOPES = ["https://www.googleapis.com/auth/datastore"]
+_CREDENTIALS = None
 
 
 def _project() -> str:
     return get_settings().FIRESTORE_PROJECT
 
 
-def _id_token() -> str:
-    """Exchange the stored refresh token for a fresh idToken (cached ~1h)."""
-    if _TOKEN["value"] and time.time() < _TOKEN["expires_at"] - 300:
-        return _TOKEN["value"]
-
-    settings = get_settings()
-    refresh = settings.FIREBASE_REFRESH_TOKEN
-    api_key = settings.FIREBASE_API_KEY
-    if not refresh:
-        raise DatabaseError("FIREBASE_REFRESH_TOKEN is not set")
-    if not api_key:
-        raise DatabaseError("FIREBASE_API_KEY is not set")
-    try:
-        resp = requests.post(
-            _TOKEN_URL,
-            params={"key": api_key},
-            data={"grant_type": "refresh_token", "refresh_token": refresh},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        _TOKEN["value"] = data["id_token"]
-        _TOKEN["expires_at"] = time.time() + int(data.get("expires_in", 3600))
-        return _TOKEN["value"]
-    except requests.RequestException as e:
-        raise DatabaseError(f"Firebase token exchange failed: {e}") from e
-    except (KeyError, ValueError) as e:
-        raise DatabaseError(f"Bad Firebase token response: {e}") from e
+def _access_token() -> str:
+    """OAuth access token from the service-account JSON (google-auth
+    handles refresh automatically)."""
+    global _CREDENTIALS
+    if _CREDENTIALS is None:
+        raw = get_settings().FIREBASE_SERVICE_ACCOUNT_JSON
+        if not raw:
+            raise DatabaseError("FIREBASE_SERVICE_ACCOUNT_JSON is not set")
+        try:
+            info = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise DatabaseError(
+                f"FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON: {e}") from e
+        try:
+            from google.oauth2 import service_account
+            _CREDENTIALS = service_account.Credentials.from_service_account_info(
+                info, scopes=_SCOPES)
+        except ImportError:
+            raise DatabaseError(
+                "google-auth is required for DB_TYPE=firestore "
+                "(pip install -r requirements-poller.txt)")
+    if not _CREDENTIALS.valid:
+        from google.auth.transport.requests import Request as _GARequest
+        try:
+            _CREDENTIALS.refresh(_GARequest())
+        except Exception as e:
+            raise DatabaseError(f"Service-account token refresh failed: {e}") from e
+    return _CREDENTIALS.token
 
 
 def _req(method: str, path: str, **kwargs) -> requests.Response:
     """Authed request against the documents API. `path` is relative to
     the documents root, or ':commit'."""
     headers = kwargs.pop("headers", {})
-    headers["Authorization"] = f"Bearer {_id_token()}"
+    headers["Authorization"] = f"Bearer {_access_token()}"
     resp = requests.request(
         method, f"{_DOCS_ROOT.format(project=_project())}/{path}",
         headers=headers, timeout=30, **kwargs,
@@ -162,8 +165,8 @@ def _iso_now() -> str:
 def init_storage(path=None):
     """Validate credentials + return the REST store handle (the settings
     object — all calls go through the module's cached token)."""
-    _id_token()  # fail fast if the refresh token is bad
-    logger.info("Firestore storage initialized (REST, uid-scoped write)")
+    _access_token()  # fail fast if the service account key is bad
+    logger.info("Firestore storage initialized (REST, service account)")
     return _get_client_sentinel()
 
 
@@ -183,12 +186,16 @@ def _get_client_sentinel():
 
 def init_seen():
     """Alias for init_storage — seen-entries share the same store."""
-    _id_token()
+    _access_token()
     return _SENTINEL
 
 
+MAX_ATTEMPTS = 3
+
+
 def is_new_entry(conn, guid: str) -> bool:
-    """Check whether an RSS guid has been processed already."""
+    """Check whether an RSS guid needs processing. Docs marked `failed`
+    retry until attempts hits MAX_ATTEMPTS, then count as seen."""
     try:
         if not guid:
             raise ValidationError("GUID cannot be empty")
@@ -196,7 +203,12 @@ def is_new_entry(conn, guid: str) -> bool:
         if resp.status_code == 404:
             is_new = True
         elif resp.ok:
-            is_new = False
+            fields = resp.json().get("fields", {})
+            if fields.get("failed", {}).get("booleanValue"):
+                attempts = int(fields.get("attempts", {}).get("integerValue", "0"))
+                is_new = attempts < MAX_ATTEMPTS
+            else:
+                is_new = False
         else:
             raise DatabaseError(f"Firestore read failed {resp.status_code}: {resp.text[:200]}")
         logger.debug(f"Entry {guid} is_new={is_new}")
@@ -228,6 +240,41 @@ def mark_seen(conn, guid: str, link: str):
     except Exception as e:
         logger.error(f"Failed to mark entry {guid}: {e}")
         raise DatabaseError(f"Failed to mark entry: {e}") from e
+
+
+def mark_failed(conn, guid: str, link: str, error: str = ""):
+    """Record a failed processing attempt. Unlike mark_seen, the entry
+    stays retryable until attempts reaches MAX_ATTEMPTS — protects
+    against dropping chapters during transient outages (e.g. a
+    Cloudflare-challenged redirect that clears later)."""
+    try:
+        if not guid:
+            raise ValidationError("GUID cannot be empty")
+        attempts = 0
+        resp = _req("GET", f"{SEEN_COL}/{_hash(guid)}")
+        if resp.ok:
+            attempts = int(resp.json().get("fields", {})
+                           .get("attempts", {}).get("integerValue", "0"))
+        resp = _req("PATCH", f"{SEEN_COL}/{_hash(guid)}", json={
+            "fields": _fields({
+                "guid": guid,
+                "link": link or "",
+                "failed": True,
+                "attempts": attempts + 1,
+                "lastError": (error or "")[:300],
+                "lastSeen": time.time(),
+            })
+        })
+        if not resp.ok:
+            raise DatabaseError(f"Firestore write failed {resp.status_code}: {resp.text[:200]}")
+        logger.info(f"Recorded failed attempt {attempts + 1} for entry {guid}")
+    except ValidationError:
+        raise
+    except DatabaseError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to record entry failure {guid}: {e}")
+        raise DatabaseError(f"Failed to record entry failure: {e}") from e
 
 
 def save_chapter(conn, url, series, chapter_label, title, text, method):

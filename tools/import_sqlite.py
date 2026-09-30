@@ -7,7 +7,7 @@ them through data.firestore_store — same dedup keys the poller uses, so
 migrated data won't be re-fetched.
 
 Usage:
-    export FIREBASE_REFRESH_TOKEN="<anon-user refresh token>"
+    export FIREBASE_SERVICE_ACCOUNT_JSON="$(cat service-account.json)"
     python tools/import_sqlite.py \
         --chapters-db chapters.db --seen-db seen_entries.db [--dry-run]
 """

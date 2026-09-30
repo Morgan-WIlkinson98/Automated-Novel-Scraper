@@ -114,6 +114,20 @@ def mark_seen(conn, guid: str, link: str):
         raise DatabaseError(f"Failed to mark entry: {e}") from e
 
 
+def mark_failed(conn, guid: str, link: str, error: str = ""):
+    """Record a failed processing attempt — firestore mode retries the
+    entry until attempts hit MAX_ATTEMPTS; other backends leave it
+    unseen so the next poll retries anyway."""
+    try:
+        db_manager = get_database_manager()
+        if db_manager.db_type == "firestore":
+            from data import firestore_store
+            return firestore_store.mark_failed(conn, guid, link, error)
+        logger.info(f"Entry {guid} failed; left unmarked for retry")
+    except Exception as e:
+        logger.error(f"Failed to record entry failure {guid}: {e}")
+
+
 def fetch_authenticated_feed(url: str) -> str:
     """Fetch RSS feed with authentication if credentials are provided."""
     try:
@@ -357,9 +371,14 @@ def poll_once(conn, on_new_entry):
                 
                 if is_new_entry(conn, guid):
                     logger.info(f"Processing new entry: {getattr(entry, 'title', 'unknown')}")
-                    on_new_entry(entry, is_import=False)
-                    mark_seen(conn, guid, entry.link)
-                    processed_count += 1
+                    try:
+                        if on_new_entry(entry, is_import=False) is False:
+                            raise RuntimeError("entry pipeline returned failure")
+                        mark_seen(conn, guid, entry.link)
+                        processed_count += 1
+                    except Exception as e:
+                        mark_failed(conn, guid, entry.link, str(e))
+                        raise
             except Exception as e:
                 logger.error(f"Error processing entry: {e}")
                 continue

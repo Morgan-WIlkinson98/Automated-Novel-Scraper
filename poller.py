@@ -9,8 +9,8 @@ run metadata in Firestore, then exit. No daemon loop.
 Required env (see .github/workflows/poll.yml):
     DB_TYPE=firestore
     RSS_FEED_URL                    — keyed personal feed (Actions secret)
-    FIREBASE_REFRESH_TOKEN          — dedicated anonymous Firebase user
-                                      (Actions secret; see README → Cloud Mode)
+    FIREBASE_SERVICE_ACCOUNT_JSON   — GCP SA key JSON (Actions secret;
+                                      see README → Cloud Mode)
 Optional:
     NOVELUPDATES_COOKIES            — JSON dict of session cookies
     SERIES_SYNC_INLINE=1            — run series-page sync inline (workflow sets this)
@@ -37,8 +37,8 @@ def main() -> int:
     if not settings.RSS_FEED_URL:
         logger.error("RSS_FEED_URL is not set")
         return 2
-    if not settings.FIREBASE_REFRESH_TOKEN:
-        logger.error("FIREBASE_REFRESH_TOKEN is not set")
+    if not settings.FIREBASE_SERVICE_ACCOUNT_JSON:
+        logger.error("FIREBASE_SERVICE_ACCOUNT_JSON is not set")
         return 2
 
     from data import firestore_store
@@ -49,11 +49,17 @@ def main() -> int:
 
     def on_new_entry(entry, is_import=False):
         try:
-            handle_new_entry(entry, is_import)
-            stats["processed"] += 1
+            ok = handle_new_entry(entry, is_import)
         except Exception as e:
             logger.exception("Entry processing failed")
             stats["errors"].append(str(e))
+            raise
+        if ok is False:
+            stats["errors"].append(
+                f"failed: {getattr(entry, 'title', 'unknown')}")
+        else:
+            stats["processed"] += 1
+        return ok
 
     started = time.time()
     status = "ok"

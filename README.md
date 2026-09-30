@@ -301,10 +301,10 @@ def quality_check(text: str, min_chars: int = 500, min_paragraphs: int = 3) -> b
 
 The app can run without any always-on host: a GitHub Actions workflow
 (`.github/workflows/poll.yml`) polls the RSS feed every 30 minutes and
-writes results to **Firestore** — the same project that backs
-morganwilkinson.com's workshop apps. The site's `/apps/novels` page reads
-that data client-side, so nothing scrapes from Cloudflare
-infrastructure.
+writes results to **Firestore** in the dedicated `morganwilkinson-novels`
+Firebase project. The site's `/apps/novels` page reads that data
+client-side via the Firestore REST API, so nothing scrapes from
+Cloudflare infrastructure.
 
 ```
 GitHub Actions cron → python poller.py (single pass) → Firestore
@@ -318,7 +318,7 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
 |---|---|---|
 | `DB_TYPE=firestore` | — | Selects the Firestore backend |
 | `RSS_FEED_URL` | `NU_RSS_FEED_URL` | Keyed personal NU feed URL |
-| `FIREBASE_REFRESH_TOKEN` | `FIREBASE_REFRESH_TOKEN` | Anonymous Firebase user's refresh token (mint once via Identity Toolkit `accounts:signUp`; rules gate writes to that uid) |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | `FIREBASE_SERVICE_ACCOUNT_JSON` | GCP service-account JSON for `novels-poller@morganwilkinson-novels` (SA tokens bypass Firestore rules, so writes stay private while reads are public) |
 | `NOVELUPDATES_COOKIES` | `NU_COOKIES` | Optional JSON dict if the feed needs auth |
 | `SERIES_SYNC_INLINE=1` | — | Set by the workflow (no daemon threads in a one-shot run) |
 | `EXPORT_DIR` | — | Set to `$RUNNER_TEMP/exports` in the workflow |
@@ -335,7 +335,7 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
 ### Migrating existing data
 
 ```bash
-export FIREBASE_REFRESH_TOKEN="<anon-user refresh token>"
+export FIREBASE_SERVICE_ACCOUNT_JSON="$(cat path/to/key.json)"
 python tools/import_sqlite.py --dry-run          # count what would migrate
 python tools/import_sqlite.py                    # write it to Firestore
 ```

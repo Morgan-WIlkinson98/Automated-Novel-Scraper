@@ -1,5 +1,6 @@
 feedparser
 requests
+google-auth
 trafilatura
 readability-lxml
 beautifulsoup4

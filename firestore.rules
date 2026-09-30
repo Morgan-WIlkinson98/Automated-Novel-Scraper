@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Novels app (morganwilkinson.com/apps/novels). The site reads
+    // client-side via the Firestore REST API — public read is fine
+    // because the page itself sits behind Cloudflare Access and the
+    // data is republished scraped chapter content.
+    // Writes come from the GitHub Actions poller's GCP service
+    // account, which bypasses these rules entirely.
+    match /novels/{doc=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /novels_meta/{doc=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+    // novels_seen (RSS dedup state) is poller-internal — and every
+    // other collection stays default-deny anyway.
+  }
+}
