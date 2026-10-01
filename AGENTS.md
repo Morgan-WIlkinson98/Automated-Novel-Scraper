@@ -13,7 +13,13 @@ Invoke these skills with `/development-workflow` or `/repo-setup` in any session
 
 See `.devin/rules/REPOSITORY_RULES.md` for detailed repository-specific rules.
 
-## App Isolation (CRITICAL)
+## Shared Rules — morganwilkinson.com App Family
+
+Common rules for every repo hosting an app under morganwilkinson.com
+(the site/orchestrator repo, this repo, 3d-printer-workshop, ...).
+Keep them in sync across repos — when they change in one, propagate.
+
+### App isolation (CRITICAL)
 
 Apps hosted under morganwilkinson.com are independent of each other —
 this app must never share databases, rules files, secrets, or other
@@ -21,6 +27,32 @@ backend infrastructure with other apps (e.g. the 3d-printer-workshop
 repo). This app owns its Firebase project (`mw-novels`)
 end to end. The only cross-app touchpoint allowed is the orchestrator
 repo (morganwilkinson.com), which hosts the hub and Access config.
+
+### Documentation sync (required)
+
+Any change to code, config, infrastructure, or deploy behavior MUST
+update the docs in the **same PR** so they always match the real state:
+
+- `README.md` — setup, stack, features
+- `AGENTS.md` — if rules/processes changed
+- Any other docs the change touches
+
+Never leave docs describing retired behavior, dead URLs, or removed
+infrastructure. If you notice stale docs while working, fix them.
+
+### Secrets discipline
+
+Secrets live only in GitHub Actions secrets — never in source,
+`config.py`, tests, or other committed files. This repo's secrets:
+`NU_RSS_FEED_URL`, `FIREBASE_SERVICE_ACCOUNT_JSON`, `NU_COOKIES`.
+
+### Branch & PR hygiene
+
+- Feature branches off `main`; never commit directly to `main` or `dev`
+- Draft PR first; mark ready only when verified
+- PR body must include: what changed and why, breaking changes or
+  migration notes, numbered how-to-test steps a reviewer can follow,
+  and testing evidence
 
 ## Python Code Quality Rules
 
