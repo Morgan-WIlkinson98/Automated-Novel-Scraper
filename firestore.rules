@@ -16,6 +16,10 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
+    match /novels_updates/{doc=**} {
+      allow read: if true;
+      allow write: if false;
+    }
     // novels_seen (RSS dedup state) is poller-internal — and every
     // other collection stays default-deny anyway.
   }

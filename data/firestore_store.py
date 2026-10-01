@@ -11,6 +11,8 @@ the key in GitHub secrets.
 Collections (Firestore project mw-novels):
     novels/{slug}                  — one doc per series
     novels/{slug}/chapters/{id}    — one doc per chapter (id = sha256(url))
+    novels_updates/{chapter_id}    — flat per-chapter feed for the site's
+                                     Latest-updates tab (id = sha256(url))
     novels_seen/{guid_hash}        — RSS dedup (replaces seen_entries.db)
     novels_meta/state              — latest poller run status
 
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 SERIES_COL = "novels"
 SEEN_COL = "novels_seen"
 META_COL = "novels_meta"
+UPDATES_COL = "novels_updates"
 META_DOC = "state"
 
 _DOCS_ROOT = (
@@ -309,15 +312,32 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
             raise DatabaseError(
                 f"Firestore chapter write failed {resp.status_code}: {resp.text[:200]}")
 
-        # Bump the series doc: merge identity fields + increment count
+        chapter_id = _hash(url)
+
+        # One atomic commit: upsert the series doc (identity + latest-
+        # chapter pointer for the library "latest" column), bump the
+        # count, and append to the novels_updates feed the site's
+        # Latest-updates tab reads.
         resp = _req("POST", ":commit", json={"writes": [
             {
                 "update": {
                     "name": _doc_name(f"{SERIES_COL}/{slug}"),
-                    "fields": _fields({"name": series, "slug": slug}),
+                    "fields": _fields({
+                        "name": series,
+                        "slug": slug,
+                        "latestChapterId": chapter_id,
+                        "latestChapterLabel": chapter_label or "",
+                        "latestChapterTitle": title or "Untitled",
+                        "latestChapterUrl": url,
+                        "latestFetchedAt": time.time(),
+                    }),
                 },
-                "updateMask": {"fieldPaths": ["name", "slug"]},
-                "currentDocument": {"exists": False},
+                "updateMask": {"fieldPaths": [
+                    "name", "slug",
+                    "latestChapterId", "latestChapterLabel",
+                    "latestChapterTitle", "latestChapterUrl",
+                    "latestFetchedAt",
+                ]},
             },
             {
                 "transform": {
@@ -328,28 +348,21 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
                     ],
                 }
             },
+            {
+                "update": {
+                    "name": _doc_name(f"{UPDATES_COL}/{chapter_id}"),
+                    "fields": _fields({
+                        "slug": slug,
+                        "series": series,
+                        "chapterId": chapter_id,
+                        "label": chapter_label or "",
+                        "title": title or "Untitled",
+                        "url": url,
+                        "addedAt": time.time(),
+                    }),
+                },
+            },
         ]})
-        # If the series doc already exists the first write fails the batch;
-        # retry with the update-write unconditional instead.
-        if not resp.ok:
-            resp = _req("POST", ":commit", json={"writes": [
-                {
-                    "update": {
-                        "name": _doc_name(f"{SERIES_COL}/{slug}"),
-                        "fields": _fields({"name": series, "slug": slug}),
-                    },
-                    "updateMask": {"fieldPaths": ["name", "slug"]},
-                },
-                {
-                    "transform": {
-                        "document": _doc_name(f"{SERIES_COL}/{slug}"),
-                        "fieldTransforms": [
-                            {"fieldPath": "chapterCount", "increment": {"integerValue": "1"}},
-                            {"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"},
-                        ],
-                    }
-                },
-            ]})
         if not resp.ok:
             raise DatabaseError(
                 f"Firestore series update failed {resp.status_code}: {resp.text[:200]}")
@@ -434,16 +447,21 @@ def get_series_info(conn, series: str):
 
 def bulk_upsert(docs):
     """Batch-write docs via the commit API — docs is a list of
-    (doc_path, {field: value}) pairs. Upserts, no per-doc dedup —
-    intended for the one-off migration where speed beats delicacy.
+    (doc_path, {field: value}) pairs, or (doc_path, fields, mask) triples
+    where mask is a list of field paths to merge (leaving other fields
+    on the doc untouched). Upserts, no per-doc dedup — intended for the
+    one-off migration where speed beats delicacy.
     Returns number of docs written."""
     written = 0
     for i in range(0, len(docs), 400):
         chunk = docs[i:i + 400]
-        writes = [
-            {"update": {"name": _doc_name(path), "fields": _fields(fields)}}
-            for path, fields in chunk
-        ]
+        writes = []
+        for item in chunk:
+            path, fields = item[0], item[1]
+            w = {"update": {"name": _doc_name(path), "fields": _fields(fields)}}
+            if len(item) > 2 and item[2]:
+                w["updateMask"] = {"fieldPaths": list(item[2])}
+            writes.append(w)
         resp = _req("POST", ":commit", json={"writes": writes})
         if not resp.ok:
             raise DatabaseError(

@@ -98,17 +98,52 @@ def main() -> int:
         logger.info("No series_info table — skipping")
 
     # --- chapters ---
+    # Migrated chapters are insert-if-absent in Firestore (save_chapter
+    # 409-skips dupes), so the feed/series-pointer backfill below uses
+    # bulk_upsert with the SQLite fetched_at ordering — idempotent and
+    # safe to re-run.
     n = 0
+    update_docs = []
+    latest_by_series = {}  # slug -> (fetched_at, chapter fields)
     for row in chapters.execute(
-        "SELECT url, series, chapter_label, title, text, extraction_method FROM chapters"
+        "SELECT url, series, chapter_label, title, text, extraction_method, fetched_at"
+        " FROM chapters"
     ):
         if store:
             fs.save_chapter(
                 store, row["url"], row["series"], row["chapter_label"],
                 row["title"], row["text"], row["extraction_method"],
             )
+        slug = fs._slugify(row["series"])
+        chapter_id = fs._hash(row["url"])
+        fetched = row["fetched_at"] or 0
+        update_docs.append((f"{fs.UPDATES_COL}/{chapter_id}", {
+            "slug": slug,
+            "series": row["series"],
+            "chapterId": chapter_id,
+            "label": row["chapter_label"] or "",
+            "title": row["title"] or "Untitled",
+            "url": row["url"],
+            "addedAt": fetched,
+        }))
+        cur = latest_by_series.get(slug)
+        if cur is None or fetched >= cur[0]:
+            latest_by_series[slug] = (fetched, {
+                "latestChapterId": chapter_id,
+                "latestChapterLabel": row["chapter_label"] or "",
+                "latestChapterTitle": row["title"] or "Untitled",
+                "latestChapterUrl": row["url"],
+                "latestFetchedAt": fetched,
+            })
         n += 1
-    logger.info(f"chapters: {n} rows {'(dry run)' if not store else 'migrated'}")
+    if store:
+        fs.bulk_upsert(update_docs)
+        fs.bulk_upsert([
+            (f"novels/{slug}", fields, list(fields.keys()))
+            for slug, (_f, fields) in latest_by_series.items()
+        ])
+    logger.info(f"chapters: {n} rows {'(dry run)' if not store else 'migrated'}"
+                f" — {len(latest_by_series)} series latest-chapter stamps")
 
     # --- seen_entries ---
     if os.path.exists(args.seen_db):
