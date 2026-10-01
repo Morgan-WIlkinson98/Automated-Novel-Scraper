@@ -280,6 +280,19 @@ def mark_failed(conn, guid: str, link: str, error: str = ""):
         raise DatabaseError(f"Failed to record entry failure: {e}") from e
 
 
+def has_chapter(series: str, url: str) -> bool:
+    """True if a chapter doc already exists for this final URL — lets the
+    backfill skip re-extracting chapters we already archived."""
+    resp = _req(
+        "GET", f"{SERIES_COL}/{_slugify(series)}/chapters/{_hash(url)}")
+    if resp.status_code == 404:
+        return False
+    if not resp.ok:
+        raise DatabaseError(
+            f"Firestore chapter read failed {resp.status_code}: {resp.text[:200]}")
+    return True
+
+
 def save_chapter(conn, url, series, chapter_label, title, text, method):
     """Save a chapter (insert-if-absent, same semantics as INSERT OR IGNORE)."""
     try:
@@ -469,6 +482,38 @@ def bulk_upsert(docs):
         written += len(chunk)
         logger.info(f"Bulk wrote {written}/{len(docs)} docs")
     return written
+
+
+REQUESTS_COL = "novels_requests"
+
+
+def list_requests(statuses=("pending", "processing")):
+    """Docs in novels_requests that still need work. The site queues a
+    full-series backfill here via the Pages Function; the poller drains
+    the queue each run."""
+    resp = _req("GET", REQUESTS_COL)
+    if resp.status_code == 404:
+        return []
+    if not resp.ok:
+        raise DatabaseError(
+            f"Firestore requests read failed {resp.status_code}: {resp.text[:200]}")
+    out = []
+    for d in resp.json().get("documents", []):
+        fields = {k: _from_field(v) for k, v in d.get("fields", {}).items()}
+        fields["slug"] = d["name"].rsplit("/", 1)[-1]
+        if fields.get("status") in statuses:
+            out.append(fields)
+    return out
+
+
+def update_request(slug: str, fields: dict):
+    """Merge-write a novels_requests doc (status, queue, progress)."""
+    params = [("updateMask.fieldPaths", k) for k in fields.keys()]
+    resp = _req("PATCH", f"{REQUESTS_COL}/{slug}", params=params,
+                json={"fields": _fields(fields)})
+    if not resp.ok:
+        raise DatabaseError(
+            f"Firestore request write failed {resp.status_code}: {resp.text[:200]}")
 
 
 def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: float = 0.0, run_url: str = None):

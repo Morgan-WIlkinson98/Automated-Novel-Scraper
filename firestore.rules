@@ -20,6 +20,13 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
+    // Full-series backfill requests queued by the site's Access-gated
+    // Pages Function (status/progress shown in the app). Writes come
+    // from the Pages Function + poller service accounts.
+    match /novels_requests/{doc=**} {
+      allow read: if true;
+      allow write: if false;
+    }
     // novels_seen (RSS dedup state) is poller-internal — and every
     // other collection stays default-deny anyway.
   }

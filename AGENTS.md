@@ -54,6 +54,27 @@ Secrets live only in GitHub Actions secrets — never in source,
   migration notes, numbered how-to-test steps a reviewer can follow,
   and testing evidence
 
+### Data safety — deletes (CRITICAL)
+
+Any delete of user data — a UI action, a script or migration, or an
+agent-run command — must guarantee no important data is lost:
+
+- **Say exactly what will be deleted and get explicit approval first**
+  — which records, how many, and side effects like orphaned
+  references. UI confirm dialogs must describe what is actually
+  removed; never claim related records are deleted when they aren't.
+- **Compound create-then-delete operations must be atomic or strictly
+  ordered.** When an action creates a replacement and removes the
+  original (convert, migrate, move), the delete must never run unless
+  the create succeeded — use a transaction/batch where the store
+  supports one, or gate the delete on the write's success. A failed
+  operation leaves the original data untouched.
+- **Check dependents before deleting** a record other data references —
+  preserve what the references need (snapshot metadata, keep ids,
+  migrate references) or block the delete.
+- **Prefer recoverable deletes** — soft-delete/archive flags, backups,
+  export-before-migration — wherever practical.
+
 ## Python Code Quality Rules
 
 ### F-String Syntax (CRITICAL)
