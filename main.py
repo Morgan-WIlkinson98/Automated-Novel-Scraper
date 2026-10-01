@@ -6,6 +6,7 @@ site_overrides, storage, politeness
 
 import logging
 import json
+import os
 import re
 import threading
 from urllib.parse import urlparse
@@ -56,13 +57,17 @@ def _sync_series_info_async(series_name: str, series_url: str):
         logger.error(f"Background sync failed for {series_name}: {e}")
 
 def handle_new_entry(entry, is_import=False):
-    """Process a new RSS entry through the complete pipeline."""
+    """Process a new RSS entry through the complete pipeline.
+
+    Returns True if the entry was fully handled (or at least catalogued),
+    False when nothing useful came out of it — callers use that to decide
+    whether to mark the guid seen or retry it later."""
     try:
         db = get_db()
         feed_link = entry.link
         if not feed_link:
             logger.warning("Entry has no link, skipping")
-            return
+            return False
         
         logger.info(f"Processing entry: {getattr(entry, 'title', 'unknown')} (import={is_import})")
         
@@ -89,7 +94,7 @@ def handle_new_entry(entry, is_import=False):
                 latest_chapter_label=chapter_summary or getattr(entry, "title", ""),
                 latest_chapter_link=feed_link,
             )
-            return
+            return True
         
         # Resolve link
         try:
@@ -97,7 +102,7 @@ def handle_new_entry(entry, is_import=False):
             logger.debug(f"Resolved URL: {feed_link} -> {final_url}")
         except (HTTPError, ValidationError) as e:
             logger.error(f"Failed to resolve URL {feed_link}: {e}")
-            return
+            return False
         
         domain = urlparse(final_url).netloc
         logger.debug(f"Domain: {domain}")
@@ -110,7 +115,7 @@ def handle_new_entry(entry, is_import=False):
             resp = polite_get(final_url)
             if resp is None:
                 logger.warning(f"Skipping {final_url}, blocked or unreachable")
-                return
+                return False
             
             override_text = extract_with_override(resp.text, domain)
             if override_text:
@@ -120,7 +125,7 @@ def handle_new_entry(entry, is_import=False):
                 logger.info(f"Site override succeeded for {final_url}")
             else:
                 logger.warning(f"No extraction succeeded for {final_url}, needs a new override entry")
-                return
+                return False
 
         # Save to database
         try:
@@ -143,23 +148,29 @@ def handle_new_entry(entry, is_import=False):
             )
             
             # Kick off a background sync for the series page metadata
+            # (inline in one-shot runs — daemon threads die at process exit)
             if series_url:
-                threading.Thread(
-                    target=_sync_series_info_async,
-                    args=(series_name, series_url),
-                    daemon=True,
-                ).start()
+                if os.getenv("SERIES_SYNC_INLINE") == "1":
+                    _sync_series_info_async(series_name, series_url)
+                else:
+                    threading.Thread(
+                        target=_sync_series_info_async,
+                        args=(series_name, series_url),
+                        daemon=True,
+                    ).start()
             
             logger.info(f"Saved: {result.title} ({result.method})")
+            return True
         except DatabaseError as e:
             logger.error(f"Failed to save chapter {final_url}: {e}")
-            return
+            return False
         except ValidationError as e:
             logger.error(f"Validation error saving chapter: {e}")
-            return
+            return False
             
     except Exception as e:
         logger.error(f"Unexpected error processing entry: {e}", exc_info=True)
+        return False
 
 def main():
     """Main entry point with proper initialization and cleanup."""

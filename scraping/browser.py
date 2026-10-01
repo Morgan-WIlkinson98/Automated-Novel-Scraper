@@ -7,11 +7,20 @@ Depends on: playwright
 """
 
 import logging
+import os
 from contextlib import contextmanager
 from urllib.parse import urlparse
 from core.exceptions import HTTPError, TimeoutError, ValidationError
 
 logger = logging.getLogger(__name__)
+
+
+def _headed() -> bool:
+    """Run the browser headed (NU_HEADED=1). Headless Chromium never
+    clears NovelUpdates' Cloudflare challenge — headed does in ~4s.
+    Locally a window briefly pops up; in CI run under xvfb (see
+    poll.yml)."""
+    return os.getenv("NU_HEADED") == "1"
 
 
 def _is_novelupdates_extnu(url: str) -> bool:
@@ -21,6 +30,46 @@ def _is_novelupdates_extnu(url: str) -> bool:
         return parsed.netloc == 'www.novelupdates.com' and parsed.path.startswith('/extnu/')
     except Exception:
         return False
+
+
+_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
+)
+
+
+def _launch_browser(p):
+    """Launch Google Chrome when available, else bundled Chromium.
+    Headed (NU_HEADED=1) clears NU's Cloudflare challenge; headless does
+    not. Keep the launch args minimal — extra hardening flags
+    (--disable-web-security, site-per-process off), forged sec-ch-ua
+    headers, and stubbing window.chrome all trip the bot check."""
+    args = ["--disable-blink-features=AutomationControlled"]
+    try:
+        return p.chromium.launch(
+            headless=not _headed(), channel="chrome", args=args)
+    except Exception as e:
+        logger.warning(f"Could not launch Google Chrome ({e}), falling back to Playwright Chromium")
+        return p.chromium.launch(headless=not _headed(), args=args)
+
+
+def _new_context(browser):
+    """Browser context with the NU session cookies loaded."""
+    from core.settings import get_settings
+    cookies = get_settings().NOVELUPDATES_COOKIES
+    context = browser.new_context(
+        user_agent=_USER_AGENT,
+        viewport={"width": 1280, "height": 800},
+    )
+    if isinstance(cookies, dict) and cookies:
+        try:
+            context.add_cookies([
+                {"name": k, "value": v, "domain": ".novelupdates.com", "path": "/"}
+                for k, v in cookies.items()
+            ])
+        except Exception as e:
+            logger.warning(f"Failed to add some cookies: {e}")
+    return context
 
 
 def resolve_with_browser(url: str, timeout: int = 45) -> str:
@@ -38,74 +87,11 @@ def resolve_with_browser(url: str, timeout: int = 45) -> str:
         raise HTTPError("Playwright not installed") from e
     
     logger.info(f"Resolving with browser: {url}")
-    
-    from core.settings import get_settings
-    settings = get_settings()
-    cookies = settings.NOVELUPDATES_COOKIES if isinstance(settings.NOVELUPDATES_COOKIES, dict) else None
-    
-    # Use the same browser fingerprint as the provided curl command
-    user_agent = (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
-    )
-    
+
     try:
         with sync_playwright() as p:
-            # Try to use installed Google Chrome for better fingerprint matching
-            try:
-                browser = p.chromium.launch(
-                    headless=True,
-                    channel="chrome",
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--disable-features=IsolateOrigins,site-per-process",
-                        "--disable-web-security",
-                    ]
-                )
-            except Exception as e:
-                logger.warning(f"Could not launch Google Chrome ({e}), falling back to Playwright Chromium")
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--disable-features=IsolateOrigins,site-per-process",
-                        "--disable-web-security",
-                    ]
-                )
-            
-            context = browser.new_context(
-                user_agent=user_agent,
-                viewport={"width": 1280, "height": 800},
-                extra_http_headers={
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Referer": "https://www.novelupdates.com/",
-                    "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
-                    "sec-ch-ua-mobile": "?0",
-                    "sec-ch-ua-platform": '"macOS"',
-                    "Upgrade-Insecure-Requests": "1",
-                },
-            )
-            
-            if cookies:
-                # Format cookies for Playwright context (must include domain and path)
-                context_cookies = [
-                    {"name": k, "value": v, "domain": ".novelupdates.com", "path": "/"}
-                    for k, v in cookies.items()
-                ]
-                try:
-                    context.add_cookies(context_cookies)
-                except Exception as e:
-                    logger.warning(f"Failed to add some cookies: {e}")
-            
-            # Hide webdriver property to avoid bot detection
-            context.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-                window.chrome = { runtime: {} };
-            """)
-            
+            browser = _launch_browser(p)
+            context = _new_context(browser)
             page = context.new_page()
             
             try:
@@ -161,70 +147,11 @@ def get_page_html(url: str, timeout: int = 60) -> str:
         raise HTTPError("Playwright not installed") from e
     
     logger.info(f"Fetching page HTML with browser: {url}")
-    
-    from core.settings import get_settings
-    settings = get_settings()
-    cookies = settings.NOVELUPDATES_COOKIES if isinstance(settings.NOVELUPDATES_COOKIES, dict) else None
-    
-    user_agent = (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
-    )
-    
+
     try:
         with sync_playwright() as p:
-            try:
-                browser = p.chromium.launch(
-                    headless=True,
-                    channel="chrome",
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--disable-features=IsolateOrigins,site-per-process",
-                        "--disable-web-security",
-                    ]
-                )
-            except Exception as e:
-                logger.warning(f"Could not launch Google Chrome ({e}), falling back to Playwright Chromium")
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--disable-features=IsolateOrigins,site-per-process",
-                        "--disable-web-security",
-                    ]
-                )
-            
-            context = browser.new_context(
-                user_agent=user_agent,
-                viewport={"width": 1280, "height": 800},
-                extra_http_headers={
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Referer": "https://www.novelupdates.com/",
-                    "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
-                    "sec-ch-ua-mobile": "?0",
-                    "sec-ch-ua-platform": '"macOS"',
-                    "Upgrade-Insecure-Requests": "1",
-                },
-            )
-            
-            if cookies:
-                context_cookies = [
-                    {"name": k, "value": v, "domain": ".novelupdates.com", "path": "/"}
-                    for k, v in cookies.items()
-                ]
-                try:
-                    context.add_cookies(context_cookies)
-                except Exception as e:
-                    logger.warning(f"Failed to add some cookies: {e}")
-            
-            context.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-                window.chrome = { runtime: {} };
-            """)
-            
+            browser = _launch_browser(p)
+            context = _new_context(browser)
             page = context.new_page()
             
             try:
@@ -264,69 +191,10 @@ def get_browser_page(timeout: int = 60):
         logger.error("Playwright is not installed. Run: pip install playwright && python -m playwright install chromium")
         raise HTTPError("Playwright not installed") from e
     
-    from core.settings import get_settings
-    settings = get_settings()
-    cookies = settings.NOVELUPDATES_COOKIES if isinstance(settings.NOVELUPDATES_COOKIES, dict) else None
-    
-    user_agent = (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
-    )
-    
     p = sync_playwright().start()
     try:
-        try:
-            browser = p.chromium.launch(
-                headless=True,
-                channel="chrome",
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-features=IsolateOrigins,site-per-process",
-                    "--disable-web-security",
-                ]
-            )
-        except Exception as e:
-            logger.warning(f"Could not launch Google Chrome ({e}), falling back to Playwright Chromium")
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-features=IsolateOrigins,site-per-process",
-                    "--disable-web-security",
-                ]
-            )
-        
-        context = browser.new_context(
-            user_agent=user_agent,
-            viewport={"width": 1280, "height": 800},
-            extra_http_headers={
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Referer": "https://www.novelupdates.com/",
-                "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"macOS"',
-                "Upgrade-Insecure-Requests": "1",
-            },
-        )
-        
-        if cookies:
-            context_cookies = [
-                {"name": k, "value": v, "domain": ".novelupdates.com", "path": "/"}
-                for k, v in cookies.items()
-            ]
-            try:
-                context.add_cookies(context_cookies)
-            except Exception as e:
-                logger.warning(f"Failed to add some cookies: {e}")
-        
-        context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-            window.chrome = { runtime: {} };
-        """)
-        
+        browser = _launch_browser(p)
+        context = _new_context(browser)
         page = context.new_page()
         page.set_default_navigation_timeout(timeout * 1000)
         page.set_default_timeout(timeout * 1000)

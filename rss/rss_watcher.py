@@ -26,7 +26,11 @@ def _get_config():
 def init_db(path="seen_entries.db"):
     """Initialize database for tracking seen RSS entries."""
     db_manager = get_database_manager()
-    
+
+    if db_manager.db_type == "firestore":
+        from data import firestore_store
+        return firestore_store.init_seen()
+
     # Only handle SQLite-specific initialization for backwards compatibility
     if os.getenv("DB_TYPE", "sqlite").lower() == "sqlite":
         try:
@@ -58,8 +62,11 @@ def is_new_entry(conn, guid: str) -> bool:
             raise ValidationError("GUID cannot be empty")
         
         db_manager = get_database_manager()
-        
-        if db_manager.db_type == "sqlite":
+
+        if db_manager.db_type == "firestore":
+            from data import firestore_store
+            return firestore_store.is_new_entry(conn, guid)
+        elif db_manager.db_type == "sqlite":
             cur = conn.execute("SELECT 1 FROM seen_entries WHERE guid = ?", (guid,))
             is_new = cur.fetchone() is None
         else:
@@ -82,8 +89,11 @@ def mark_seen(conn, guid: str, link: str):
             raise ValidationError("GUID and link cannot be empty")
         
         db_manager = get_database_manager()
-        
-        if db_manager.db_type == "sqlite":
+
+        if db_manager.db_type == "firestore":
+            from data import firestore_store
+            return firestore_store.mark_seen(conn, guid, link)
+        elif db_manager.db_type == "sqlite":
             conn.execute(
                 "INSERT OR IGNORE INTO seen_entries (guid, link, first_seen) VALUES (?, ?, ?)",
                 (guid, link, time.time()),
@@ -102,6 +112,20 @@ def mark_seen(conn, guid: str, link: str):
     except Exception as e:
         logger.error(f"Failed to mark entry {guid} as seen: {e}")
         raise DatabaseError(f"Failed to mark entry: {e}") from e
+
+
+def mark_failed(conn, guid: str, link: str, error: str = ""):
+    """Record a failed processing attempt — firestore mode retries the
+    entry until attempts hit MAX_ATTEMPTS; other backends leave it
+    unseen so the next poll retries anyway."""
+    try:
+        db_manager = get_database_manager()
+        if db_manager.db_type == "firestore":
+            from data import firestore_store
+            return firestore_store.mark_failed(conn, guid, link, error)
+        logger.info(f"Entry {guid} failed; left unmarked for retry")
+    except Exception as e:
+        logger.error(f"Failed to record entry failure {guid}: {e}")
 
 
 def fetch_authenticated_feed(url: str) -> str:
@@ -347,9 +371,14 @@ def poll_once(conn, on_new_entry):
                 
                 if is_new_entry(conn, guid):
                     logger.info(f"Processing new entry: {getattr(entry, 'title', 'unknown')}")
-                    on_new_entry(entry, is_import=False)
-                    mark_seen(conn, guid, entry.link)
-                    processed_count += 1
+                    try:
+                        if on_new_entry(entry, is_import=False) is False:
+                            raise RuntimeError("entry pipeline returned failure")
+                        mark_seen(conn, guid, entry.link)
+                        processed_count += 1
+                    except Exception as e:
+                        mark_failed(conn, guid, entry.link, str(e))
+                        raise
             except Exception as e:
                 logger.error(f"Error processing entry: {e}")
                 continue
