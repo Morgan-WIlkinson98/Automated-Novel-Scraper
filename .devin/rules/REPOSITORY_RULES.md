@@ -10,10 +10,8 @@ Follow the global development-workflow skill for all changes.
 
 **PR Requirements**:
 - PR must be in draft state
-- PR must link to issue with "Resolves #[ISSUE-ID]"
 - PR must have assignee (repository owner/user)
 - PR must have reviewer (repository owner/user)
-- PR must have issue ID as label (e.g., "123" for issue #123)
 
 ### Backup Requirements
 - **CRITICAL**: Always backup data directory before any data structure changes
@@ -69,13 +67,3 @@ Before any PR completion:
 - Database schema changes
 - Browser compatibility for scraping
 - RSS feed authentication failures
-
-## Issue Creation Template
-
-For Automated Novel Scraper issues, include:
-- Module affected (scraper, export, web_ui, storage)
-- Python error traceback if applicable
-- Current behavior vs expected behavior
-- RSS feed being scraped (if applicable)
-- Relevant configuration snippets
-- Database schema changes if applicable

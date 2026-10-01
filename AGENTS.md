@@ -106,15 +106,13 @@ Before any PR completion:
 ## Development Workflow
 
 When working on this repository:
-1. Create GitHub issue for each bug/feature
-2. Create feature branch from main: `feature/ISSUE-123-fix-description`
-3. Implement changes following Python best practices
-4. Test thoroughly before creating PR
-5. Create draft PR to main linking to issue with:
+1. Create feature branch from main: `feature/short-description`
+2. Implement changes following Python best practices
+3. Test thoroughly before creating PR
+4. Create draft PR to main with:
    - Assignee: repository owner/user
    - Reviewer: repository owner/user
-   - Label: issue ID (e.g., "123" for issue #123)
-6. Request user testing and confirmation
-7. Create final backup after user confirmation
-8. Merge to dev for further testing
-9. User handles main merge manually
+5. Request user testing and confirmation
+6. Create final backup after user confirmation
+7. Merge to dev for further testing
+8. User handles main merge manually
