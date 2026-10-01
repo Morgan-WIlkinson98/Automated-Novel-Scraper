@@ -14,6 +14,9 @@ Required env (see .github/workflows/poll.yml):
 Optional:
     NOVELUPDATES_COOKIES            — JSON dict of session cookies
     SERIES_SYNC_INLINE=1            — run series-page sync inline (workflow sets this)
+    NU_HEADED=1                     — run Playwright headed; required to clear
+                                      NU's Cloudflare challenge (headless never
+                                      does). CI runs it under xvfb (poll.yml).
 """
 
 import logging

@@ -39,7 +39,9 @@ jobs:
           restore-keys: playwright-${{ runner.os }}-
 
       - name: Install Playwright Chromium
-        run: playwright install chromium --with-deps
+        run: |
+          playwright install chromium --with-deps
+          sudo apt-get install -y xvfb
 
       - name: Run poller
         env:
@@ -49,4 +51,7 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           SERIES_SYNC_INLINE: '1'
           EXPORT_DIR: ${{ runner.temp }}/exports
-        run: python poller.py
+          # Headless Chromium never clears NU's Cloudflare challenge;
+          # run headed under a virtual display.
+          NU_HEADED: '1'
+        run: xvfb-run -a python poller.py
