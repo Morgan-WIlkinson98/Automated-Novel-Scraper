@@ -16,9 +16,17 @@ from scraping.politeness import polite_get
 from core.exceptions import ExtractionError, QualityError, ValidationError
 
 
-def _fetch_rendered_html(url: str) -> Optional[str]:
-    """Use Playwright to render JS-heavy pages as a last resort."""
+def _fetch_rendered_html(url: str, page=None) -> Optional[str]:
+    """Use Playwright to render JS-heavy pages as a last resort.
+
+    `page` lets a caller inside a long-lived Playwright session (the
+    backfill drain) reuse it — sync_playwright() can't start again while
+    another instance is already running on this thread."""
     try:
+        if page is not None:
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(5000)
+            return page.content()
         from scraping.browser import get_page_html
         return get_page_html(url, timeout=60)
     except Exception as e:
@@ -136,7 +144,7 @@ def quality_check(text: str, min_chars: int = 500, min_paragraphs: int = 3) -> b
     return passed
 
 
-def extract_chapter(url: str) -> ExtractionResult:
+def extract_chapter(url: str, page=None) -> ExtractionResult:
     """
     Attempt generic extraction of a chapter's text from a URL.
     Tries trafilatura first, falls back to readability-lxml,
@@ -167,7 +175,7 @@ def extract_chapter(url: str) -> ExtractionResult:
         # Last resort: render the page with Playwright for JS-heavy sites
         if not quality_check(text):
             logger.info(f"Readability also failed, trying browser-rendered fetch for {url}")
-            rendered_html = _fetch_rendered_html(url)
+            rendered_html = _fetch_rendered_html(url, page=page)
             if rendered_html:
                 logger.debug(f"Fetched rendered HTML ({len(rendered_html)} chars) for {url}")
                 rendered_title, rendered_text = _extract_with_trafilatura(rendered_html, url)

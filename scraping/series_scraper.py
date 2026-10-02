@@ -143,18 +143,26 @@ def _extract_synopsis(html: str) -> str:
     return ''
 
 
-def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200) -> Dict:
-    """Scrape a NovelUpdates series page for synopsis and all paginated chapters."""
+def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200,
+                       page=None) -> Dict:
+    """Scrape a NovelUpdates series page for synopsis and all paginated chapters.
+
+    `page` lets a caller inside a long-lived Playwright session (the
+    backfill drain) reuse it — sync_playwright() can't start again while
+    another instance is already running on this thread."""
+    import contextlib
     from scraping.browser import get_browser_page
-    
+
     base_url = series_url.rstrip('/') + '/'
     logger.info(f"Scraping series page: {base_url}")
-    
+
     synopsis = ''
     chapters = []
     seen_urls = set()
-    
-    with get_browser_page(timeout=timeout) as page:
+
+    cm = contextlib.nullcontext(page) if page is not None \
+        else get_browser_page(timeout=timeout)
+    with cm as page:
         # First page: synopsis and first batch of chapters
         page.goto(base_url, wait_until="domcontentloaded")
         page.wait_for_timeout(7000)

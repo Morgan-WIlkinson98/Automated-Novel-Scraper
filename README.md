@@ -367,7 +367,12 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   covers the rest (~1-2s per resolve vs ~9s per fresh browser, and no
   repeated challenge rolls to trip CF's rate limit); a crashed session
   rebuilds up to 3 times before items fall back to the standalone
-  resolver. Failed items
+  resolver. The same shared page is also threaded into
+  `scrape_series_page` (pending-request promotion) and
+  `extract_chapter`'s rendered-HTML fallback — sync_playwright can't
+  start a second instance while one is already running on the thread,
+  which previously crashed every pending promotion with "Sync API
+  inside the asyncio loop". Failed items
   re-queue for the next run — up to 3 attempts, then dropped.
   Cloudflare-blocked resolves are treated as transient infrastructure
   failures instead: they re-queue *without* consuming an attempt, pause

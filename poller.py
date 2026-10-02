@@ -236,7 +236,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
         if req.get("status") == "pending":
             logger.info(f"Backfill request for {slug}: scraping series page")
             try:
-                info = scrape_series_page(req.get("url", ""))
+                info = scrape_series_page(req.get("url", ""), page=_page)
             except Exception as e:
                 firestore_store.update_request(slug, {
                     "status": "error", "error": str(e)[:300],
@@ -335,7 +335,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
                         except Exception as e:
                             logger.debug(f"heal patch failed for {final_url}: {e}")
                 else:
-                    result = extract_chapter(final_url)
+                    result = extract_chapter(final_url, page=_page)
                     if result.passed_quality_check:
                         save_chapter(
                             None, url=final_url,
