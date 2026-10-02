@@ -176,6 +176,10 @@ def init_storage(path=None):
 class _ClientSentinel:
     """Opaque handle so call sites keep the same (conn, ...) signature."""
 
+    def close(self):
+        """No-op — REST has nothing to close; keeps sqlite-style
+        conn.close() call sites working in firestore mode."""
+
     def __repr__(self):
         return "<FirestoreREST>"
 
