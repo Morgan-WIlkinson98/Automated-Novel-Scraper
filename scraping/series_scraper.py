@@ -144,12 +144,15 @@ def _extract_synopsis(html: str) -> str:
 
 
 def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200,
-                       page=None) -> Dict:
+                       page=None, stop_at=None) -> Dict:
     """Scrape a NovelUpdates series page for synopsis and all paginated chapters.
 
     `page` lets a caller inside a long-lived Playwright session (the
     backfill drain) reuse it — sync_playwright() can't start again while
-    another instance is already running on this thread."""
+    another instance is already running on this thread.
+    `stop_at` (epoch seconds) bounds total scrape time — pagination stops
+    early and the result is flagged `truncated` so the caller can retry
+    on the next run instead of one huge series eating a whole job."""
     import contextlib
     from scraping.browser import get_browser_page
 
@@ -159,23 +162,30 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200
     synopsis = ''
     chapters = []
     seen_urls = set()
+    truncated = False
+
+    def _challenge_title() -> bool:
+        try:
+            t = (page.title() or '').lower()
+        except Exception:
+            return False
+        return 'just a moment' in t or 'attention required' in t
 
     cm = contextlib.nullcontext(page) if page is not None \
         else get_browser_page(timeout=timeout)
     with cm as page:
-        # First page: synopsis and first batch of chapters
+        # First page: synopsis and first batch of chapters. The wait is
+        # challenge-aware — CF may still be solving when domcontentloaded
+        # fires, so poll the title instead of sleeping a fixed 7s.
         page.goto(base_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(7000)
+        page.wait_for_timeout(5000)
+        for _ in range(15):
+            if not _challenge_title():
+                break
+            page.wait_for_timeout(2000)
         html = page.content()
 
-        # CF interstitials identify by title — a real page can legitimately
-        # contain "cloudflare" strings (CDN scripts, badges).
-        title = ''
-        try:
-            title = (page.title() or '').lower()
-        except Exception:
-            pass
-        if 'just a moment' in title or 'attention required' in title:
+        if _challenge_title():
             logger.warning(f"Cloudflare challenge blocked {base_url}; skipping series page scrape")
             return {
                 'url': series_url,
@@ -195,22 +205,30 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200
         
         # Follow paginated chapter tables (?pg=2#myTable, etc.) until no new chapters
         for pg in range(2, last_page + 1):
+            if stop_at is not None and time.time() >= stop_at:
+                logger.warning(
+                    f"Scrape time limit hit at page {pg} for {base_url} — truncated")
+                truncated = True
+                break
             page_url = urljoin(base_url, f'?pg={pg}#myTable')
             logger.info(f"Scraping page {pg}: {page_url}")
             try:
                 page.goto(page_url, wait_until="domcontentloaded")
-                page.wait_for_timeout(7000)
+                # NU's chapter table is server-rendered — wait for the
+                # rows to exist instead of a fixed 7s nap per page.
+                try:
+                    page.wait_for_selector("#myTable tr", timeout=12000)
+                except Exception:
+                    pass
+                page.wait_for_timeout(1500)
             except Exception as e:
                 logger.warning(f"Failed to load page {pg}: {e}")
                 break
-            
+
             html = page.content()
-            try:
-                title = (page.title() or '').lower()
-            except Exception:
-                title = ''
-            if 'just a moment' in title or 'attention required' in title:
+            if _challenge_title():
                 logger.warning(f"Cloudflare challenge on page {pg}, stopping pagination")
+                truncated = True
                 break
             
             page_chapters = _parse_chapter_list(html, base_url)
@@ -232,6 +250,7 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200
         'url': series_url,
         'synopsis': synopsis,
         'chapters': chapters,
+        'truncated': truncated,
     }
 
 
