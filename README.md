@@ -361,7 +361,13 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   drains it: `scrape_series_page` enumerates the full NU chapter table,
   then the poller resolves + extracts missing chapters (already-archived
   chapters skip extraction via a `get_chapter` check, which also lets the
-  drain lazy-heal missing `group`/`nuLink` on old docs). Failed items
+  drain lazy-heal missing `group`/`nuLink` on old docs). All extnu
+  resolves in a drain ride one shared headed-browser session — the first
+  navigation solves NU's Cloudflare challenge and the clearance cookie
+  covers the rest (~1-2s per resolve vs ~9s per fresh browser, and no
+  repeated challenge rolls to trip CF's rate limit); a crashed session
+  rebuilds up to 3 times before items fall back to the standalone
+  resolver. Failed items
   re-queue for the next run — up to 3 attempts, then dropped — and
   Cloudflare-blocked resolves trigger a cool-down pause so rate-limit
   bursts don't burn the slice. Every request gets
