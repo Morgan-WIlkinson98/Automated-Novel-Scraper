@@ -328,7 +328,12 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
 - `novels/{slug}` — series docs (`name`, `url`, `synopsis`, `latestLabel`,
   `latestLink`, `chapterCount`, `lastSynced`, …)
 - `novels/{slug}/chapters/{sha256(url)}` — chapter docs (`title`, `label`,
-  `text`, `method`, `fetchedAt`) — insert-if-absent, so runs are idempotent
+  `text`, `method`, `group`, `fetchedAt`) — insert-if-absent, so runs are
+  idempotent. `group` is the NU releases-table translator group (the
+  `/group/` link in the release row); a series can hold several groups'
+  versions of the same chapter number as separate docs — the site groups,
+  filters, and sorts by it. RSS-path saves get `group` by matching the
+  entry's extnu link against the series' cached `availableChapters` list.
 - `novels_updates/{sha256(url)}` — feed docs (one per chapter) powering the
   site's Latest-updates tab
 - `novels_seen/{sha256(guid)}` — RSS dedup (replaces `seen_entries.db`)

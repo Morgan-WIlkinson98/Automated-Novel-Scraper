@@ -181,7 +181,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
                 continue
             queue = [
                 {"num": c.get("number"), "extnu": c["extnu_url"],
-                 "label": c.get("title", "")}
+                 "label": c.get("title", ""), "group": c.get("group")}
                 for c in info.get("chapters", []) if c.get("extnu_url")
             ]
             if info.get("synopsis"):
@@ -215,6 +215,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
                             chapter_label=f"c{num}" if num else (item.get("label") or ""),
                             title=result.title or "Untitled",
                             text=result.text, method=result.method,
+                            group=item.get("group"),
                         )
                         done += 1
                         fetched += 1

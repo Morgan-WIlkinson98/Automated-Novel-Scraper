@@ -297,8 +297,12 @@ def has_chapter(series: str, url: str) -> bool:
     return True
 
 
-def save_chapter(conn, url, series, chapter_label, title, text, method):
-    """Save a chapter (insert-if-absent, same semantics as INSERT OR IGNORE)."""
+def save_chapter(conn, url, series, chapter_label, title, text, method,
+                 group=None):
+    """Save a chapter (insert-if-absent, same semantics as INSERT OR IGNORE).
+    `group` is the NU releases-table group name — a series can carry
+    several groups' versions of the same chapter number as distinct docs
+    (dedup is by final URL)."""
     try:
         if not url or not isinstance(url, str):
             raise ValidationError("URL cannot be empty")
@@ -319,6 +323,7 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
                 "title": title or "Untitled",
                 "text": text,
                 "method": method or "",
+                "group": group or "",
                 "fetchedAt": time.time(),
             })},
         )
@@ -375,6 +380,7 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
                         "label": chapter_label or "",
                         "title": title or "Untitled",
                         "url": url,
+                        "group": group or "",
                         "addedAt": time.time(),
                     }),
                 },

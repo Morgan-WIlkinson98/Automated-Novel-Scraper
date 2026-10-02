@@ -21,6 +21,19 @@ def _extract_series_url_from_summary(summary: str) -> Optional[str]:
     return match.group(0).rstrip('/') + '/' if match else None
 
 
+def _release_group(link_tag) -> Optional[str]:
+    """Translator group for a release row — the sibling cell that links to
+    NU's /group/ page (the releases table's last column)."""
+    row = link_tag.find_parent('tr')
+    if not row:
+        return None
+    a = row.find('a', href=re.compile(r'/group/', re.I))
+    if a:
+        name = a.get_text(strip=True)
+        return name or None
+    return None
+
+
 def _parse_chapter_list(html: str, base_url: str) -> List[Dict]:
     """Attempt to find all chapter links on a NovelUpdates series page."""
     try:
@@ -28,11 +41,11 @@ def _parse_chapter_list(html: str, base_url: str) -> List[Dict]:
     except ImportError:
         logger.error("BeautifulSoup not installed. Run: pip install beautifulsoup4")
         raise HTTPError("BeautifulSoup not installed")
-    
+
     soup = BeautifulSoup(html, 'html.parser')
     chapters = []
     seen_urls = set()
-    
+
     # Strategy 1: links with class or containing 'extnu'
     for a in soup.find_all('a', href=True):
         href = a['href']
@@ -47,8 +60,9 @@ def _parse_chapter_list(html: str, base_url: str) -> List[Dict]:
                     'number': number,
                     'title': text,
                     'extnu_url': full_url,
+                    'group': _release_group(a),
                 })
-    
+
     # Strategy 2: rows in the chapter table (NU commonly uses .chapter-list or similar)
     if not chapters:
         for tr in soup.find_all('tr'):
@@ -67,6 +81,7 @@ def _parse_chapter_list(html: str, base_url: str) -> List[Dict]:
                         'number': _guess_chapter_number(text),
                         'title': text,
                         'extnu_url': full_url,
+                        'group': _release_group(a),
                     })
     
     # Sort by chapter number where possible, otherwise stable order

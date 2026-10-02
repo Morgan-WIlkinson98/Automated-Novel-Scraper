@@ -4,6 +4,7 @@ storage.py
 
 import os
 import logging
+import sqlite3
 import time
 from core.settings import get_settings
 from core.exceptions import DatabaseError, ValidationError
@@ -20,6 +21,10 @@ _EXTRA_SERIES_COLUMNS = {
     'imported_at': 'REAL',
 }
 
+_EXTRA_CHAPTER_COLUMNS = {
+    'translator_group': 'TEXT',
+}
+
 
 def _ensure_series_info_columns(conn):
     """Add any missing NovelUpdates reading-list columns to series_info."""
@@ -29,6 +34,20 @@ def _ensure_series_info_columns(conn):
             try:
                 conn.execute(f"ALTER TABLE series_info ADD COLUMN {column} {col_type}")
                 logger.info(f"Added missing column '{column}' to series_info")
+            except sqlite3.OperationalError:
+                pass
+    conn.commit()
+
+
+def _ensure_chapter_columns(conn):
+    """Add any missing columns to chapters (e.g. translator_group for
+    multi-group archives)."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(chapters)")}
+    for column, col_type in _EXTRA_CHAPTER_COLUMNS.items():
+        if column not in existing:
+            try:
+                conn.execute(f"ALTER TABLE chapters ADD COLUMN {column} {col_type}")
+                logger.info(f"Added missing column '{column}' to chapters")
             except sqlite3.OperationalError:
                 pass
     conn.commit()
@@ -47,7 +66,6 @@ def init_storage(path=None):
         if path is None:
             path = get_settings().CHAPTERS_DB
         try:
-            import sqlite3
             conn = sqlite3.connect(path)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS chapters (
@@ -70,6 +88,7 @@ def init_storage(path=None):
                 )
             """)
             _ensure_series_info_columns(conn)
+            _ensure_chapter_columns(conn)
             conn.commit()
             logger.info(f"Storage database initialized at {path}")
             return conn
@@ -82,26 +101,29 @@ def init_storage(path=None):
         return db_manager
 
 
-def save_chapter(conn, url, series, chapter_label, title, text, method):
-    """Save a chapter to the database."""
+def save_chapter(conn, url, series, chapter_label, title, text, method,
+                 group=None):
+    """Save a chapter to the database. `group` is the translator/release
+    group name from the NU releases table (None for RSS-sourced saves)."""
     try:
         # Validate inputs
         if not url or not isinstance(url, str):
             raise ValidationError("URL cannot be empty")
         if not text or not isinstance(text, str):
             raise ValidationError("Text cannot be empty")
-        
+
         db_manager = get_database_manager()
-        
+
         if db_manager.db_type == "firestore":
             from data import firestore_store
-            return firestore_store.save_chapter(conn, url, series, chapter_label, title, text, method)
+            return firestore_store.save_chapter(conn, url, series, chapter_label, title, text, method, group)
         elif db_manager.db_type == "sqlite":
+            _ensure_chapter_columns(conn)
             conn.execute("""
                 INSERT OR IGNORE INTO chapters
-                (url, series, chapter_label, title, text, extraction_method, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (url, series, chapter_label, title, text, method, time.time()))
+                (url, series, chapter_label, title, text, extraction_method, fetched_at, translator_group)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (url, series, chapter_label, title, text, method, time.time(), group))
             conn.commit()
         else:
             # PostgreSQL uses different syntax for INSERT ... ON CONFLICT
