@@ -390,7 +390,10 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   (default 300s — entries it doesn't reach stay "new" for the next run)
   and the drain runs under `POLL_RUN_BUDGET_S` (default 1260s, the
   whole-run cap measured from start), so RSS can never starve the
-  backfill queue. Status flows
+  backfill queue. Requests that died on transient infrastructure errors
+  (Cloudflare walls, timeouts, playwright crashes) auto-retry on later
+  runs — bounded by an `autoRetries` counter (<2) so genuinely broken
+  series URLs stay terminal. Status flows
   `pending → processing → done|error` and the site displays it live.
 
 ### Migrating existing data

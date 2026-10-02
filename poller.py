@@ -153,11 +153,24 @@ def drain_requests(errors: list, max_chapters: int = 40,
     from data.storage import save_chapter
 
     try:
-        requests_ = firestore_store.list_requests()
+        requests_ = firestore_store.list_requests(
+            ("pending", "processing", "error"))
     except Exception as e:
         errors.append(f"requests read failed: {e}")
         logger.warning(f"Could not read novels_requests: {e}")
         return 0
+    # Requests that died on transient infrastructure errors (playwright
+    # nesting crashes, CF walls on the series page, timeouts) get auto-
+    # retried — bounded by autoRetries so a genuinely broken series URL
+    # doesn't resurrect forever. Anything else stays terminal.
+    _TRANSIENT_ERR = ("asyncio", "cloudflare", "timeout", "timed out",
+                      "connection", "temporar", "rate limit", "playwright")
+    requests_ = [
+        r for r in requests_
+        if r.get("status") != "error"
+        or (any(t in str(r.get("error") or "").lower() for t in _TRANSIENT_ERR)
+            and int(r.get("autoRetries") or 0) < 2)
+    ]
     if not requests_:
         return 0
 
@@ -233,13 +246,14 @@ def drain_requests(errors: list, max_chapters: int = 40,
         queue = req.get("queue") or []
         done = int(req.get("processedCount") or 0)
 
-        if req.get("status") == "pending":
+        if req.get("status") in ("pending", "error"):
             logger.info(f"Backfill request for {slug}: scraping series page")
             try:
                 info = scrape_series_page(req.get("url", ""), page=_page)
             except Exception as e:
                 firestore_store.update_request(slug, {
                     "status": "error", "error": str(e)[:300],
+                    "autoRetries": int(req.get("autoRetries") or 0) + 1,
                 })
                 errors.append(f"backfill {slug}: {e}")
                 continue
@@ -247,6 +261,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
                 firestore_store.update_request(slug, {
                     "status": "error",
                     "error": "Cloudflare challenge on series page — set NU_COOKIES",
+                    "autoRetries": int(req.get("autoRetries") or 0) + 1,
                 })
                 errors.append(f"backfill {slug}: Cloudflare challenge")
                 continue
