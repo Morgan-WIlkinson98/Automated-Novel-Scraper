@@ -337,8 +337,13 @@ def load_xml_exports(on_new_entry):
     logger.info(f"Processed {processed_count} entries from XML exports")
 
 
-def poll_once(conn, on_new_entry):
-    """Perform a single polling iteration of the RSS feed."""
+def poll_once(conn, on_new_entry, deadline=None):
+    """Perform a single polling iteration of the RSS feed.
+
+    `deadline` (epoch seconds) bounds how long new-entry processing may
+    run — checked between entries, so the expensive resolve+extract path
+    can't starve the backfill drain that runs after it in the same job.
+    Entries not reached stay "new" and are picked up next run."""
     try:
         config = _get_config()
         logger.info(f"Polling RSS feed: {config.RSS_FEED_URL}")
@@ -363,6 +368,10 @@ def poll_once(conn, on_new_entry):
         
         processed_count = 0
         for entry in feed.entries:
+            if deadline is not None and time.time() >= deadline:
+                logger.info("RSS time budget exhausted — remaining "
+                            "entries stay new for the next run")
+                break
             try:
                 guid = getattr(entry, "id", entry.link)
                 if not guid:
