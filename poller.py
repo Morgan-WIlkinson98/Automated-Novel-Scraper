@@ -206,6 +206,11 @@ def drain_requests(errors: list, max_chapters: int = 40,
                  "label": c.get("title", ""), "group": c.get("group")}
                 for c in info.get("chapters", []) if c.get("extnu_url")
             ]
+            # NU's releases table is newest-first — sort ascending so a
+            # backfill fills from chapter 1 up and early chapters are
+            # readable long before the tail drains. Unnumbered rows
+            # (prologues/side stories) ride at the end.
+            queue.sort(key=lambda c: (c["num"] is None, c["num"] or 0))
             if info.get("synopsis"):
                 firestore_store.save_series_info(
                     None, series=series_name,
