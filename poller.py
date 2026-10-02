@@ -90,13 +90,19 @@ def main() -> int:
         # novels_meta/state only exists after a *completed* run, so
         # long-running (or dying) jobs were invisible.
         report_phase("starting")
+        # Budget split — a busy RSS phase previously consumed the whole
+        # window and left the drain deadline already expired (its deadline
+        # was measured from run start). Now RSS gets up to
+        # RSS_TIME_BUDGET_S, and the drain gets whatever is left under
+        # POLL_RUN_BUDGET_S — a hard cap that leaves headroom under the
+        # job's 25-min timeout for the run-meta write and teardown.
+        run_deadline = started + int(os.getenv("POLL_RUN_BUDGET_S", "1260"))
         report_phase("polling RSS")
-        poll_once(conn, on_new_entry)
-        # Leave headroom under the job's 25-min timeout for the run-meta
-        # write and teardown — a cancelled step would drop everything the
-        # drain loop hadn't flushed yet.
+        rss_deadline = started + int(os.getenv("RSS_TIME_BUDGET_S", "300"))
+        poll_once(conn, on_new_entry, deadline=rss_deadline)
         report_phase("draining backfill queue")
-        deadline = started + int(os.getenv("DRAIN_TIME_BUDGET_S", "1200"))
+        drain_budget = int(os.getenv("DRAIN_TIME_BUDGET_S", "1200"))
+        deadline = min(run_deadline, time.time() + drain_budget)
         stats["processed"] += drain_requests(stats["errors"], deadline=deadline)
     except Exception as e:
         status = "failed"

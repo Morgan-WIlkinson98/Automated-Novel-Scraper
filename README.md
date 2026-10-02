@@ -375,7 +375,12 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   total and `DRAIN_ITEMS_PER_REQUEST`=40 items attempted per request),
   progress is flushed to Firestore every 60s, and the whole drain is
   time-boxed by `DRAIN_TIME_BUDGET_S` (default 1200s) so the 25-min job
-  timeout can't kill a run before progress is persisted. Status flows
+  timeout can't kill a run before progress is persisted. The run splits
+  its time: RSS entry processing is capped by `RSS_TIME_BUDGET_S`
+  (default 300s — entries it doesn't reach stay "new" for the next run)
+  and the drain runs under `POLL_RUN_BUDGET_S` (default 1260s, the
+  whole-run cap measured from start), so RSS can never starve the
+  backfill queue. Status flows
   `pending → processing → done|error` and the site displays it live.
 
 ### Migrating existing data
