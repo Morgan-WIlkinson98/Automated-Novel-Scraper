@@ -300,9 +300,12 @@ def quality_check(text: str, min_chars: int = 500, min_paragraphs: int = 3) -> b
 ## Cloud Mode (Scheduled Poller)
 
 The app can run without any always-on host: a GitHub Actions workflow
-(`.github/workflows/poll.yml`) polls the RSS feed every 30 minutes and
-writes results to **Firestore** in the dedicated `mw-novels`
-Firebase project. The site's `/apps/novels` page reads that data
+(`.github/workflows/poll.yml`) polls the RSS feed every 30 minutes (or
+on demand via `workflow_dispatch` — the site's Novels app fires one when
+you queue a backfill or click "Run poller now") and writes results to
+**Firestore** in the dedicated `mw-novels` Firebase project. The job
+runs inside the official `playwright/python` container (browsers +
+system deps baked in — no per-run apt/browser install). The site's `/apps/novels` page reads that data
 client-side via the Firestore REST API, so nothing scrapes from
 Cloudflare infrastructure.
 
