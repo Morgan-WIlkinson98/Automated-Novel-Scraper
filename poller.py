@@ -222,7 +222,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
 
     fetched = 0
     bail_drain = False
-    for req in requests_:
+    for i, req in enumerate(requests_):
         if out_of_time():
             logger.info("Backfill time budget exhausted — deferring "
                         "remaining requests to the next run")
@@ -298,8 +298,19 @@ def drain_requests(errors: list, max_chapters: int = 40,
                   done, activity)
         except Exception:
             pass
+        # Fair-share slice — a request whose items are slow (dead
+        # sources take ~35s each to resolve-then-fail) could burn the
+        # whole drain window and starve everyone behind it, so each
+        # request gets an even share of the budget still on the clock.
+        remaining_reqs = max(1, len(requests_) - i)
+        slice_deadline = min(
+            deadline if deadline is not None else float("inf"),
+            time.time() + max(60.0,
+                              (deadline - time.time()) / remaining_reqs)
+            if deadline is not None else float("inf"))
         while (remaining and fetched < max_chapters
-               and attempted < _DRAIN_ITEM_CAP and not out_of_time()):
+               and attempted < _DRAIN_ITEM_CAP and not out_of_time()
+               and time.time() < slice_deadline):
             item = remaining.pop(0)
             attempted += 1
             num, link = item.get("num"), item.get("extnu")

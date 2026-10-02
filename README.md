@@ -375,7 +375,9 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   drain bails entirely until the next run rather than keeping the IP
   flagged. Every request gets
   a bounded slice per run (FIFO by `requestedAt`, max 40 new chapters
-  total and `DRAIN_ITEMS_PER_REQUEST`=40 items attempted per request),
+  total, `DRAIN_ITEMS_PER_REQUEST`=40 items attempted per request, and a
+  fair-share time slice — remaining budget ÷ remaining requests — so one
+  slow request can't starve the ones queued behind it),
   progress is flushed to Firestore every 60s, and the whole drain is
   time-boxed by `DRAIN_TIME_BUDGET_S` (default 1200s) so the 25-min job
   timeout can't kill a run before progress is persisted. The run splits
