@@ -360,7 +360,11 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   Access-gated Pages Function ("Fetch missing chapters"). Each poll run
   drains it: `scrape_series_page` enumerates the full NU chapter table,
   then the poller resolves + extracts missing chapters (already-archived
-  chapters skip extraction via a `has_chapter` check). Every request gets
+  chapters skip extraction via a `get_chapter` check, which also lets the
+  drain lazy-heal missing `group`/`nuLink` on old docs). Failed items
+  re-queue for the next run — up to 3 attempts, then dropped — and
+  Cloudflare-blocked resolves trigger a cool-down pause so rate-limit
+  bursts don't burn the slice. Every request gets
   a bounded slice per run (FIFO by `requestedAt`, max 40 new chapters
   total and `DRAIN_ITEMS_PER_REQUEST`=40 items attempted per request),
   progress is flushed to Firestore every 60s, and the whole drain is

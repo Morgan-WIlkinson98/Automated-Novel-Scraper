@@ -227,6 +227,11 @@ def drain_requests(errors: list, max_chapters: int = 40,
                 logger.warning(f"group heal skipped for {slug}: {e}")
 
         remaining = list(queue)
+        # Items that failed this pass go here — re-joined to the queue at
+        # flush time so they retry on a LATER run (a Cloudflare mood swing
+        # shouldn't burn all 3 attempts inside one run), never re-popped
+        # in this pass. Dropped for good after 3 failures.
+        retry_next = []
         attempted = 0
         last_flush = time.time()
         activity = ""
@@ -274,15 +279,33 @@ def drain_requests(errors: list, max_chapters: int = 40,
                         activity = f"{label} extraction failed"
                         errors.append(f"backfill {slug}: extraction failed {link}")
             except Exception as e:
+                cf_blocked = "cloudflare" in str(e).lower()
                 activity = f"{label} error: {str(e)[:80]}"
                 errors.append(f"backfill {slug}: {e}")
+                failed = True
+            else:
+                cf_blocked = False
+                failed = not (doc is not None or result.passed_quality_check)
+            if failed:
+                item["attempts"] = int(item.get("attempts") or 0) + 1
+                if item["attempts"] < 3:
+                    retry_next.append(item)
+                else:
+                    activity = f"{label} dropped after 3 failures"
+                    errors.append(f"backfill {slug}: dropped {link} after 3 failures")
             time.sleep(1.5)  # politeness between fetches
+            if cf_blocked:
+                # Rapid-fire resolves trip CF's challenge rate limit —
+                # cool off so the burst doesn't burn the whole slice.
+                time.sleep(20)
             if time.time() - last_flush >= _DRAIN_FLUSH_S:
-                flush(slug, "processing", remaining, done, activity)
+                flush(slug, "processing", remaining + retry_next,
+                      done, activity)
                 last_flush = time.time()
 
-        flush(slug, "done" if not remaining else "processing",
-              remaining, done, activity)
+        queue_out = remaining + retry_next
+        flush(slug, "done" if not queue_out else "processing",
+              queue_out, done, activity)
 
     return fetched
 
