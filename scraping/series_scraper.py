@@ -159,8 +159,15 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200
         page.goto(base_url, wait_until="domcontentloaded")
         page.wait_for_timeout(7000)
         html = page.content()
-        
-        if 'cloudflare' in html.lower():
+
+        # CF interstitials identify by title — a real page can legitimately
+        # contain "cloudflare" strings (CDN scripts, badges).
+        title = ''
+        try:
+            title = (page.title() or '').lower()
+        except Exception:
+            pass
+        if 'just a moment' in title or 'attention required' in title:
             logger.warning(f"Cloudflare challenge blocked {base_url}; skipping series page scrape")
             return {
                 'url': series_url,
@@ -190,7 +197,11 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200
                 break
             
             html = page.content()
-            if 'cloudflare' in html.lower():
+            try:
+                title = (page.title() or '').lower()
+            except Exception:
+                title = ''
+            if 'just a moment' in title or 'attention required' in title:
                 logger.warning(f"Cloudflare challenge on page {pg}, stopping pagination")
                 break
             
