@@ -19,6 +19,7 @@ _EXTRA_SERIES_COLUMNS = {
     'latest_chapter_link': 'TEXT',
     'reading_list_name': 'TEXT',
     'imported_at': 'REAL',
+    'groups_healed': 'REAL',
 }
 
 _EXTRA_CHAPTER_COLUMNS = {
@@ -127,6 +128,11 @@ def save_chapter(conn, url, series, chapter_label, title, text, method,
                 (url, series, chapter_label, title, text, extraction_method, fetched_at, translator_group, nu_link)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (url, series, chapter_label, title, text, method, time.time(), group, nu_link))
+            if nu_link and not group:
+                # A healable chapter landed — reopen the heal flag.
+                conn.execute(
+                    "UPDATE series_info SET groups_healed = NULL WHERE series = ?",
+                    (series,))
             conn.commit()
         else:
             # PostgreSQL uses different syntax for INSERT ... ON CONFLICT
@@ -158,6 +164,12 @@ def heal_chapter_groups(conn, series, release_rows):
     if db_manager.db_type != "sqlite":
         return 0
     _ensure_chapter_columns(conn)
+    _ensure_series_info_columns(conn)
+    flag = conn.execute(
+        "SELECT groups_healed FROM series_info WHERE series = ?",
+        (series,)).fetchone()
+    if flag and flag[0]:
+        return 0
     group_by_link = {
         c.get('extnu_url'): c.get('group')
         for c in (release_rows or [])
@@ -178,8 +190,10 @@ def heal_chapter_groups(conn, series, release_rows):
                 "UPDATE chapters SET translator_group = ? WHERE url = ?",
                 (g, url))
             healed += 1
-    if healed:
-        conn.commit()
+    conn.execute(
+        "UPDATE series_info SET groups_healed = ? WHERE series = ?",
+        (time.time(), series))
+    conn.commit()
     return healed
 
 

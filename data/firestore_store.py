@@ -303,6 +303,17 @@ def get_chapter(series: str, url: str):
     return {k: _from_field(v) for k, v in resp.json().get("fields", {}).items()}
 
 
+def _set_groups_healed(series: str, value: str):
+    """Write the `groupsHealed` flag on the series doc — an ISO timestamp
+    when a full heal scan finished, "" to reopen heal-eligibility."""
+    resp = _req("PATCH", f"{SERIES_COL}/{_slugify(series)}",
+                params=[("updateMask.fieldPaths", "groupsHealed")],
+                json={"fields": _fields({"groupsHealed": value})})
+    if not resp.ok:
+        raise DatabaseError(
+            f"Firestore heal flag write failed {resp.status_code}: {resp.text[:200]}")
+
+
 def patch_chapter_fields(series: str, url: str, group=None, nu_link=None):
     """Merge `group`/`nuLink` onto an existing chapter doc — the lazy-heal
     path for docs written before those fields existed. Also patches the
@@ -330,6 +341,13 @@ def patch_chapter_fields(series: str, url: str, group=None, nu_link=None):
         _req("PATCH", f"{UPDATES_COL}/{chapter_id}",
              params=[("updateMask.fieldPaths", "group")],
              json={"fields": _fields({"group": group})})
+    if nu_link and not group:
+        # This doc may now be healable via its nuLink — the series can no
+        # longer claim to be fully healed.
+        try:
+            _set_groups_healed(series, "")
+        except Exception as e:
+            logger.warning(f"Could not clear heal flag for {series}: {e}")
     return True
 
 
@@ -339,6 +357,14 @@ def heal_chapter_groups(conn, series: str, release_rows, limit: int = 400):
     capture. Called after a series-page sync refreshes the release
     table, so healing costs a couple of masked list calls + PATCHes and
     no link resolution. Returns the number of docs patched."""
+    # Fast path — a previous full scan already patched everything
+    # healable; the flag is reopened by any save/patch that introduces a
+    # nuLink-bearing doc without a group.
+    try:
+        if (get_series_info(conn, series) or {}).get("groupsHealed"):
+            return 0
+    except Exception:
+        pass
     group_by_extnu = {
         c.get("extnu_url"): c.get("group")
         for c in (release_rows or [])
@@ -349,6 +375,7 @@ def heal_chapter_groups(conn, series: str, release_rows, limit: int = 400):
     slug = _slugify(series)
     healed = 0
     page_token = ""
+    complete = False
     while True:
         params = [
             ("pageSize", "300"),
@@ -378,7 +405,15 @@ def heal_chapter_groups(conn, series: str, release_rows, limit: int = 400):
                 return healed
         page_token = payload.get("nextPageToken")
         if not page_token:
+            complete = True
             break
+    if complete:
+        # Whole subcollection scanned — nothing healable remains, so later
+        # syncs can skip the walk entirely until the flag is reopened.
+        try:
+            _set_groups_healed(series, _iso_now())
+        except Exception as e:
+            logger.warning(f"Could not set heal flag for {series}: {e}")
     return healed
 
 
@@ -428,26 +463,32 @@ def save_chapter(conn, url, series, chapter_label, title, text, method,
         # chapter pointer for the library "latest" column), bump the
         # count, and append to the novels_updates feed the site's
         # Latest-updates tab reads.
+        series_fields = {
+            "name": series,
+            "slug": slug,
+            "latestChapterId": chapter_id,
+            "latestChapterLabel": chapter_label or "",
+            "latestChapterTitle": title or "Untitled",
+            "latestChapterUrl": url,
+            "latestFetchedAt": time.time(),
+        }
+        series_mask = [
+            "name", "slug",
+            "latestChapterId", "latestChapterLabel",
+            "latestChapterTitle", "latestChapterUrl",
+            "latestFetchedAt",
+        ]
+        if nu_link and not group:
+            # A healable chapter landed — reopen the series' heal flag.
+            series_fields["groupsHealed"] = ""
+            series_mask.append("groupsHealed")
         resp = _req("POST", ":commit", json={"writes": [
             {
                 "update": {
                     "name": _doc_name(f"{SERIES_COL}/{slug}"),
-                    "fields": _fields({
-                        "name": series,
-                        "slug": slug,
-                        "latestChapterId": chapter_id,
-                        "latestChapterLabel": chapter_label or "",
-                        "latestChapterTitle": title or "Untitled",
-                        "latestChapterUrl": url,
-                        "latestFetchedAt": time.time(),
-                    }),
+                    "fields": _fields(series_fields),
                 },
-                "updateMask": {"fieldPaths": [
-                    "name", "slug",
-                    "latestChapterId", "latestChapterLabel",
-                    "latestChapterTitle", "latestChapterUrl",
-                    "latestFetchedAt",
-                ]},
+                "updateMask": {"fieldPaths": series_mask},
             },
             {
                 "transform": {

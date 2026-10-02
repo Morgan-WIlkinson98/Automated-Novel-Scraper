@@ -339,7 +339,11 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   self-healing rather than migrated: every series sync (runs on each new
   RSS release) patches archived chapters whose `nuLink` is known but
   `group` is empty, and the backfill drain patches missing `group`/
-  `nuLink` on already-archived docs as the queue walks past them.
+  `nuLink` on already-archived docs as the queue walks past them. Once a
+  full scan finds nothing left to heal, the series doc's `groupsHealed`
+  flag is set and later syncs skip the walk; any chapter saved or
+  patched with a `nuLink` but no `group` clears the flag so new arrivals
+  still get healed.
 - `novels_updates/{sha256(url)}` — feed docs (one per chapter) powering the
   site's Latest-updates tab
 - `novels_seen/{sha256(guid)}` — RSS dedup (replaces `seen_entries.db`)
