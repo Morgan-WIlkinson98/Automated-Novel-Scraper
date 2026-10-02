@@ -300,9 +300,12 @@ def quality_check(text: str, min_chars: int = 500, min_paragraphs: int = 3) -> b
 ## Cloud Mode (Scheduled Poller)
 
 The app can run without any always-on host: a GitHub Actions workflow
-(`.github/workflows/poll.yml`) polls the RSS feed every 30 minutes and
-writes results to **Firestore** in the dedicated `mw-novels`
-Firebase project. The site's `/apps/novels` page reads that data
+(`.github/workflows/poll.yml`) polls the RSS feed every 30 minutes (or
+on demand via `workflow_dispatch` — the site's Novels app fires one when
+you queue a backfill or click "Run poller now") and writes results to
+**Firestore** in the dedicated `mw-novels` Firebase project. The job
+runs inside the official `playwright/python` container (browsers +
+system deps baked in — no per-run apt/browser install). The site's `/apps/novels` page reads that data
 client-side via the Firestore REST API, so nothing scrapes from
 Cloudflare infrastructure.
 
@@ -328,16 +331,40 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
 - `novels/{slug}` — series docs (`name`, `url`, `synopsis`, `latestLabel`,
   `latestLink`, `chapterCount`, `lastSynced`, …)
 - `novels/{slug}/chapters/{sha256(url)}` — chapter docs (`title`, `label`,
-  `text`, `method`, `fetchedAt`) — insert-if-absent, so runs are idempotent
+  `text`, `method`, `group`, `nuLink`, `fetchedAt`) — insert-if-absent,
+  so runs are idempotent. `group` is the NU releases-table translator
+  group (the `/group/` link in the release row); a series can hold
+  several groups' versions of the same chapter number as separate docs —
+  the site groups, filters, and sorts by it. RSS-path saves get `group`
+  by matching the entry's extnu link against the series' cached
+  `availableChapters` list; `nuLink` stores that release link so group
+  data can be healed later without re-resolving redirects. Group data is
+  self-healing rather than migrated: every series sync (runs on each new
+  RSS release) patches archived chapters whose `nuLink` is known but
+  `group` is empty, and the backfill drain patches missing `group`/
+  `nuLink` on already-archived docs as the queue walks past them. Once a
+  full scan finds nothing left to heal, the series doc's `groupsHealed`
+  flag is set and later syncs skip the walk; any chapter saved or
+  patched with a `nuLink` but no `group` clears the flag so new arrivals
+  still get healed.
 - `novels_updates/{sha256(url)}` — feed docs (one per chapter) powering the
   site's Latest-updates tab
 - `novels_seen/{sha256(guid)}` — RSS dedup (replaces `seen_entries.db`)
-- `novels_meta/state` — last run status for the site dashboard
+- `novels_meta/state` — run status for the site dashboard: a `running`
+  heartbeat (+ Actions run-log URL) is written at run start, `phase`
+  markers update at each stage (polling RSS → draining backfill), then
+  the final `ok`/`failed` status at run end. Request docs also carry an
+  `activity` line ("saved c45", "c46 already archived") refreshed on each
+  progress flush so the site can narrate per-item work.
 - `novels_requests/{slug}` — backfill queue written by the site's
   Access-gated Pages Function ("Fetch missing chapters"). Each poll run
   drains it: `scrape_series_page` enumerates the full NU chapter table,
   then the poller resolves + extracts missing chapters (already-archived
-  chapters skip extraction via a `has_chapter` check). Every request gets
+  chapters skip extraction via a `get_chapter` check, which also lets the
+  drain lazy-heal missing `group`/`nuLink` on old docs). Failed items
+  re-queue for the next run — up to 3 attempts, then dropped — and
+  Cloudflare-blocked resolves trigger a cool-down pause so rate-limit
+  bursts don't burn the slice. Every request gets
   a bounded slice per run (FIFO by `requestedAt`, max 40 new chapters
   total and `DRAIN_ITEMS_PER_REQUEST`=40 items attempted per request),
   progress is flushed to Firestore every 60s, and the whole drain is

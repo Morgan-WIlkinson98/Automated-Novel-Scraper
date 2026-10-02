@@ -287,18 +287,144 @@ def mark_failed(conn, guid: str, link: str, error: str = ""):
 def has_chapter(series: str, url: str) -> bool:
     """True if a chapter doc already exists for this final URL — lets the
     backfill skip re-extracting chapters we already archived."""
+    return get_chapter(series, url) is not None
+
+
+def get_chapter(series: str, url: str):
+    """Chapter doc fields for a final URL, or None — the drain loop uses
+    this both to skip re-extraction and to spot docs worth lazy-healing."""
     resp = _req(
         "GET", f"{SERIES_COL}/{_slugify(series)}/chapters/{_hash(url)}")
     if resp.status_code == 404:
-        return False
+        return None
     if not resp.ok:
         raise DatabaseError(
             f"Firestore chapter read failed {resp.status_code}: {resp.text[:200]}")
+    return {k: _from_field(v) for k, v in resp.json().get("fields", {}).items()}
+
+
+def _set_groups_healed(series: str, value: str):
+    """Write the `groupsHealed` flag on the series doc — an ISO timestamp
+    when a full heal scan finished, "" to reopen heal-eligibility."""
+    resp = _req("PATCH", f"{SERIES_COL}/{_slugify(series)}",
+                params=[("updateMask.fieldPaths", "groupsHealed")],
+                json={"fields": _fields({"groupsHealed": value})})
+    if not resp.ok:
+        raise DatabaseError(
+            f"Firestore heal flag write failed {resp.status_code}: {resp.text[:200]}")
+
+
+def patch_chapter_fields(series: str, url: str, group=None, nu_link=None):
+    """Merge `group`/`nuLink` onto an existing chapter doc — the lazy-heal
+    path for docs written before those fields existed. Also patches the
+    novels_updates feed entry (same doc id) so the site's Latest tab
+    heals too. No-ops when there's nothing to write."""
+    fields = {}
+    if group:
+        fields["group"] = group
+    if nu_link:
+        fields["nuLink"] = nu_link
+    if not fields or not url:
+        return False
+    chapter_id = _hash(url)
+    params = [("updateMask.fieldPaths", k) for k in fields.keys()]
+    resp = _req(
+        "PATCH", f"{SERIES_COL}/{_slugify(series)}/chapters/{chapter_id}",
+        params=params, json={"fields": _fields(fields)})
+    if resp.status_code == 404:
+        return False  # doc vanished between the read and the patch
+    if not resp.ok:
+        raise DatabaseError(
+            f"Firestore chapter patch failed {resp.status_code}: {resp.text[:200]}")
+    if group:
+        # Feed doc may not exist for very old chapters — 404 is fine.
+        _req("PATCH", f"{UPDATES_COL}/{chapter_id}",
+             params=[("updateMask.fieldPaths", "group")],
+             json={"fields": _fields({"group": group})})
+    if nu_link and not group:
+        # This doc may now be healable via its nuLink — the series can no
+        # longer claim to be fully healed.
+        try:
+            _set_groups_healed(series, "")
+        except Exception as e:
+            logger.warning(f"Could not clear heal flag for {series}: {e}")
     return True
 
 
-def save_chapter(conn, url, series, chapter_label, title, text, method):
-    """Save a chapter (insert-if-absent, same semantics as INSERT OR IGNORE)."""
+def heal_chapter_groups(conn, series: str, release_rows, limit: int = 400):
+    """Self-heal — backfill `group` onto chapter docs that know their NU
+    release link (`nuLink`, saved at fetch time) but predate group
+    capture. Called after a series-page sync refreshes the release
+    table, so healing costs a couple of masked list calls + PATCHes and
+    no link resolution. Returns the number of docs patched."""
+    # Fast path — a previous full scan already patched everything
+    # healable; the flag is reopened by any save/patch that introduces a
+    # nuLink-bearing doc without a group.
+    try:
+        if (get_series_info(conn, series) or {}).get("groupsHealed"):
+            return 0
+    except Exception:
+        pass
+    group_by_extnu = {
+        c.get("extnu_url"): c.get("group")
+        for c in (release_rows or [])
+        if c.get("extnu_url") and c.get("group")
+    }
+    if not group_by_extnu:
+        return 0
+    slug = _slugify(series)
+    healed = 0
+    page_token = ""
+    complete = False
+    while True:
+        params = [
+            ("pageSize", "300"),
+            ("mask.fieldPaths", "url"),
+            ("mask.fieldPaths", "nuLink"),
+            ("mask.fieldPaths", "group"),
+        ]
+        if page_token:
+            params.append(("pageToken", page_token))
+        resp = _req("GET", f"{SERIES_COL}/{slug}/chapters", params=params)
+        if not resp.ok:
+            break
+        payload = resp.json()
+        for d in payload.get("documents", []):
+            f = {k: _from_field(v) for k, v in d.get("fields", {}).items()}
+            if f.get("group"):
+                continue
+            g = group_by_extnu.get(f.get("nuLink") or "")
+            if not g:
+                continue
+            try:
+                patch_chapter_fields(series, f.get("url"), group=g)
+                healed += 1
+            except Exception as e:
+                logger.warning(f"group heal failed for {f.get('url')}: {e}")
+            if healed >= limit:
+                return healed
+        page_token = payload.get("nextPageToken")
+        if not page_token:
+            complete = True
+            break
+    if complete:
+        # Whole subcollection scanned — nothing healable remains, so later
+        # syncs can skip the walk entirely until the flag is reopened.
+        try:
+            _set_groups_healed(series, _iso_now())
+        except Exception as e:
+            logger.warning(f"Could not set heal flag for {series}: {e}")
+    return healed
+
+
+def save_chapter(conn, url, series, chapter_label, title, text, method,
+                 group=None, nu_link=None):
+    """Save a chapter (insert-if-absent, same semantics as INSERT OR IGNORE).
+    `group` is the NU releases-table group name — a series can carry
+    several groups' versions of the same chapter number as distinct docs
+    (dedup is by final URL). `nu_link` is the NU /extnu/ release link —
+    stored so group data can be healed onto the doc later without
+    re-resolving the redirect."""
     try:
         if not url or not isinstance(url, str):
             raise ValidationError("URL cannot be empty")
@@ -319,6 +445,8 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
                 "title": title or "Untitled",
                 "text": text,
                 "method": method or "",
+                "group": group or "",
+                "nuLink": nu_link or "",
                 "fetchedAt": time.time(),
             })},
         )
@@ -335,26 +463,32 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
         # chapter pointer for the library "latest" column), bump the
         # count, and append to the novels_updates feed the site's
         # Latest-updates tab reads.
+        series_fields = {
+            "name": series,
+            "slug": slug,
+            "latestChapterId": chapter_id,
+            "latestChapterLabel": chapter_label or "",
+            "latestChapterTitle": title or "Untitled",
+            "latestChapterUrl": url,
+            "latestFetchedAt": time.time(),
+        }
+        series_mask = [
+            "name", "slug",
+            "latestChapterId", "latestChapterLabel",
+            "latestChapterTitle", "latestChapterUrl",
+            "latestFetchedAt",
+        ]
+        if nu_link and not group:
+            # A healable chapter landed — reopen the series' heal flag.
+            series_fields["groupsHealed"] = ""
+            series_mask.append("groupsHealed")
         resp = _req("POST", ":commit", json={"writes": [
             {
                 "update": {
                     "name": _doc_name(f"{SERIES_COL}/{slug}"),
-                    "fields": _fields({
-                        "name": series,
-                        "slug": slug,
-                        "latestChapterId": chapter_id,
-                        "latestChapterLabel": chapter_label or "",
-                        "latestChapterTitle": title or "Untitled",
-                        "latestChapterUrl": url,
-                        "latestFetchedAt": time.time(),
-                    }),
+                    "fields": _fields(series_fields),
                 },
-                "updateMask": {"fieldPaths": [
-                    "name", "slug",
-                    "latestChapterId", "latestChapterLabel",
-                    "latestChapterTitle", "latestChapterUrl",
-                    "latestFetchedAt",
-                ]},
+                "updateMask": {"fieldPaths": series_mask},
             },
             {
                 "transform": {
@@ -375,6 +509,7 @@ def save_chapter(conn, url, series, chapter_label, title, text, method):
                         "label": chapter_label or "",
                         "title": title or "Untitled",
                         "url": url,
+                        "group": group or "",
                         "addedAt": time.time(),
                     }),
                 },
@@ -520,8 +655,10 @@ def update_request(slug: str, fields: dict):
             f"Firestore request write failed {resp.status_code}: {resp.text[:200]}")
 
 
-def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: float = 0.0, run_url: str = None):
-    """Record the outcome of a poller run for the site dashboard."""
+def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: float = 0.0, run_url: str = None, phase: str = ""):
+    """Record the outcome of a poller run for the site dashboard.
+    `phase` narrates what the run is doing while status == "running"
+    (setup → polling RSS → draining backfill)."""
     try:
         resp = _req("PATCH", f"{META_COL}/{META_DOC}", json={"fields": _fields({
             "lastPollAt": _iso_now(),
@@ -530,6 +667,7 @@ def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: fl
             "errors": (errors or [])[-10:],
             "durationS": duration_s,
             "runUrl": run_url or "",
+            "phase": phase or "",
         })})
         if not resp.ok:
             raise DatabaseError(f"Firestore meta write failed {resp.status_code}: {resp.text[:200]}")

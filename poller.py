@@ -66,13 +66,36 @@ def main() -> int:
 
     started = time.time()
     status = "ok"
+    run_url = ""
+    if os.getenv("GITHUB_RUN_ID"):
+        run_url = (
+            f"{os.getenv('GITHUB_SERVER_URL', 'https://github.com')}/"
+            f"{os.getenv('GITHUB_REPOSITORY', '')}/actions/runs/{os.getenv('GITHUB_RUN_ID')}"
+        )
+    def report_phase(phase):
+        """Live 'what is it doing' marker on novels_meta/state — the
+        site's backend card shows this while the run is in flight."""
+        try:
+            firestore_store.save_run_meta(
+                firestore_store.init_storage(), status="running",
+                processed=stats["processed"], errors=list(stats["errors"]),
+                duration_s=0, run_url=run_url, phase=phase)
+        except Exception as e:
+            logger.warning(f"Meta phase write failed: {e}")
+
     try:
         firestore_store.init_storage()  # validate credentials up front
         conn = init_db()
+        # Heartbeat — lets the site show a run in progress. Without this,
+        # novels_meta/state only exists after a *completed* run, so
+        # long-running (or dying) jobs were invisible.
+        report_phase("starting")
+        report_phase("polling RSS")
         poll_once(conn, on_new_entry)
         # Leave headroom under the job's 25-min timeout for the run-meta
         # write and teardown — a cancelled step would drop everything the
         # drain loop hadn't flushed yet.
+        report_phase("draining backfill queue")
         deadline = started + int(os.getenv("DRAIN_TIME_BUDGET_S", "1200"))
         stats["processed"] += drain_requests(stats["errors"], deadline=deadline)
     except Exception as e:
@@ -81,12 +104,6 @@ def main() -> int:
         logger.exception("Poll run failed")
 
     try:
-        run_url = ""
-        if os.getenv("GITHUB_RUN_ID"):
-            run_url = (
-                f"{os.getenv('GITHUB_SERVER_URL', 'https://github.com')}/"
-                f"{os.getenv('GITHUB_REPOSITORY', '')}/actions/runs/{os.getenv('GITHUB_RUN_ID')}"
-            )
         firestore_store.save_run_meta(
             firestore_store.init_storage(),
             status=status,
@@ -143,12 +160,17 @@ def drain_requests(errors: list, max_chapters: int = 40,
     def out_of_time() -> bool:
         return deadline is not None and time.time() >= deadline
 
-    def flush(slug, status, remaining, done):
-        firestore_store.update_request(slug, {
+    def flush(slug, status, remaining, done, activity=None):
+        fields = {
             "status": status, "queue": remaining,
             "processedCount": done,
             "lastRunAt": firestore_store._iso_now(),
-        })
+        }
+        if activity is not None:
+            # One-line narration for the site's progress card —
+            # e.g. "saved c45" / "c46 already archived".
+            fields["activity"] = activity
+        firestore_store.update_request(slug, fields)
 
     fetched = 0
     for req in requests_:
@@ -181,7 +203,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
                 continue
             queue = [
                 {"num": c.get("number"), "extnu": c["extnu_url"],
-                 "label": c.get("title", "")}
+                 "label": c.get("title", ""), "group": c.get("group")}
                 for c in info.get("chapters", []) if c.get("extnu_url")
             ]
             if info.get("synopsis"):
@@ -193,19 +215,51 @@ def drain_requests(errors: list, max_chapters: int = 40,
                 "totalCount": len(queue), "processedCount": 0,
             })
             logger.info(f"Backfill {slug}: {len(queue)} chapters queued")
+            # Instant heal — chapters that already carry a nuLink get
+            # their group patched now, no need to wait for the queue to
+            # reach them across runs.
+            try:
+                healed = firestore_store.heal_chapter_groups(
+                    None, series_name, info.get("chapters", []))
+                if healed:
+                    logger.info(f"Healed group on {healed} archived chapters for {slug}")
+            except Exception as e:
+                logger.warning(f"group heal skipped for {slug}: {e}")
 
         remaining = list(queue)
+        # Items that failed this pass go here — re-joined to the queue at
+        # flush time so they retry on a LATER run (a Cloudflare mood swing
+        # shouldn't burn all 3 attempts inside one run), never re-popped
+        # in this pass. Dropped for good after 3 failures.
+        retry_next = []
         attempted = 0
         last_flush = time.time()
+        activity = ""
         while (remaining and fetched < max_chapters
                and attempted < _DRAIN_ITEM_CAP and not out_of_time()):
             item = remaining.pop(0)
             attempted += 1
             num, link = item.get("num"), item.get("extnu")
+            label = f"c{num}" if num else (item.get("label") or "chapter")
             try:
                 final_url = resolve_final_url(link)
-                if firestore_store.has_chapter(series_name, final_url):
+                doc = firestore_store.get_chapter(series_name, final_url)
+                if doc is not None:
                     done += 1  # already archived — count it, skip extraction
+                    activity = f"{label} already archived"
+                    # Lazy heal — docs archived before group/nuLink existed
+                    # get patched as the queue walks past them; no migration.
+                    if (item.get("group") and not doc.get("group")) \
+                            or not doc.get("nuLink"):
+                        try:
+                            firestore_store.patch_chapter_fields(
+                                series_name, final_url,
+                                group=item.get("group")
+                                if not doc.get("group") else None,
+                                nu_link=link if not doc.get("nuLink") else None)
+                            activity = f"{label} healed (group/nuLink)"
+                        except Exception as e:
+                            logger.debug(f"heal patch failed for {final_url}: {e}")
                 else:
                     result = extract_chapter(final_url)
                     if result.passed_quality_check:
@@ -215,21 +269,43 @@ def drain_requests(errors: list, max_chapters: int = 40,
                             chapter_label=f"c{num}" if num else (item.get("label") or ""),
                             title=result.title or "Untitled",
                             text=result.text, method=result.method,
+                            group=item.get("group"),
+                            nu_link=link,
                         )
                         done += 1
                         fetched += 1
+                        activity = f"saved {label}"
                     else:
+                        activity = f"{label} extraction failed"
                         errors.append(f"backfill {slug}: extraction failed {link}")
             except Exception as e:
+                cf_blocked = "cloudflare" in str(e).lower()
+                activity = f"{label} error: {str(e)[:80]}"
                 errors.append(f"backfill {slug}: {e}")
+                failed = True
+            else:
+                cf_blocked = False
+                failed = not (doc is not None or result.passed_quality_check)
+            if failed:
+                item["attempts"] = int(item.get("attempts") or 0) + 1
+                if item["attempts"] < 3:
+                    retry_next.append(item)
+                else:
+                    activity = f"{label} dropped after 3 failures"
+                    errors.append(f"backfill {slug}: dropped {link} after 3 failures")
             time.sleep(1.5)  # politeness between fetches
+            if cf_blocked:
+                # Rapid-fire resolves trip CF's challenge rate limit —
+                # cool off so the burst doesn't burn the whole slice.
+                time.sleep(20)
             if time.time() - last_flush >= _DRAIN_FLUSH_S:
-                flush(slug, "processing", remaining, done)
+                flush(slug, "processing", remaining + retry_next,
+                      done, activity)
                 last_flush = time.time()
 
-        flush(slug, "done" if not remaining else "processing",
-              remaining, done)
-        logger.info(f"Backfill {slug}: {done} done, {len(remaining)} left")
+        queue_out = remaining + retry_next
+        flush(slug, "done" if not queue_out else "processing",
+              queue_out, done, activity)
 
     return fetched
 
