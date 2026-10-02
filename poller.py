@@ -164,7 +164,8 @@ def drain_requests(errors: list, max_chapters: int = 40,
     # retried — bounded by autoRetries so a genuinely broken series URL
     # doesn't resurrect forever. Anything else stays terminal.
     _TRANSIENT_ERR = ("asyncio", "cloudflare", "timeout", "timed out",
-                      "connection", "temporar", "rate limit", "playwright")
+                      "connection", "temporar", "rate limit", "playwright",
+                      "truncat")
     requests_ = [
         r for r in requests_
         if r.get("status") != "error"
@@ -249,7 +250,8 @@ def drain_requests(errors: list, max_chapters: int = 40,
         if req.get("status") in ("pending", "error"):
             logger.info(f"Backfill request for {slug}: scraping series page")
             try:
-                info = scrape_series_page(req.get("url", ""), page=_page)
+                info = scrape_series_page(req.get("url", ""), page=_page,
+                                          stop_at=deadline)
             except Exception as e:
                 firestore_store.update_request(slug, {
                     "status": "error", "error": str(e)[:300],
@@ -264,6 +266,16 @@ def drain_requests(errors: list, max_chapters: int = 40,
                     "autoRetries": int(req.get("autoRetries") or 0) + 1,
                 })
                 errors.append(f"backfill {slug}: Cloudflare challenge")
+                continue
+            if info.get("truncated"):
+                # Partial scrape — don't commit an incomplete queue (the
+                # tail chapters would never be discovered). Mark retryable.
+                firestore_store.update_request(slug, {
+                    "status": "error",
+                    "error": f"series scrape truncated — {len(info.get('chapters', []))} chapters so far, auto-retry next run",
+                    "autoRetries": int(req.get("autoRetries") or 0) + 1,
+                })
+                errors.append(f"backfill {slug}: scrape truncated")
                 continue
             queue = [
                 {"num": c.get("number"), "extnu": c["extnu_url"],

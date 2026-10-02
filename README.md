@@ -358,7 +358,10 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   progress flush so the site can narrate per-item work.
 - `novels_requests/{slug}` — backfill queue written by the site's
   Access-gated Pages Function ("Fetch missing chapters"). Each poll run
-  drains it: `scrape_series_page` enumerates the full NU chapter table,
+  drains it: `scrape_series_page` enumerates the full NU chapter table
+  (challenge-aware first-page wait, `#myTable` row waits per page, and a
+  `stop_at` bound — a truncated scrape marks the request retryable rather
+  than committing a partial queue),
   then the poller resolves + extracts missing chapters (already-archived
   chapters skip extraction via a `get_chapter` check, which also lets the
   drain lazy-heal missing `group`/`nuLink` on old docs). All extnu
