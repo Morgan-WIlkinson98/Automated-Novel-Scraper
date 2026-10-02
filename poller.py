@@ -157,6 +157,48 @@ def drain_requests(errors: list, max_chapters: int = 40,
 
     requests_.sort(key=lambda r: r.get("requestedAt") or "")
 
+    # Shared headed-browser session for extnu resolves — the first
+    # navigation solves NU's Cloudflare challenge and the clearance
+    # cookie then covers every later resolve (~1-2s each instead of a
+    # ~9s fresh-browser challenge roll per link, which also tripped CF's
+    # rate limit). Falls back to the standalone per-item resolver if the
+    # session can't open or dies.
+    _browser_cm = _page = None
+    _page_rebuilds = 0
+    try:
+        from scraping.browser import get_browser_page, resolve_in_page
+        _browser_cm = get_browser_page()
+        _page = _browser_cm.__enter__()
+        logger.info("Shared drain browser session opened")
+    except Exception as e:
+        logger.warning(f"Shared drain browser unavailable, per-item resolve only: {e}")
+
+    def resolve(link):
+        nonlocal _browser_cm, _page, _page_rebuilds
+        if _page is not None:
+            try:
+                return resolve_in_page(_page, link)
+            except Exception:
+                # Item-level failures (CF block, timeout) are the item's
+                # problem — churning the session just pokes NU harder.
+                # Only rebuild when the browser itself actually died.
+                try:
+                    dead = _page.is_closed() \
+                        or not _page.context.browser.is_connected()
+                except Exception:
+                    dead = True
+                if not dead or _page_rebuilds >= 3:
+                    raise
+                _page_rebuilds += 1
+                try:
+                    _browser_cm.__exit__(None, None, None)
+                except Exception:
+                    pass
+                _browser_cm = get_browser_page()
+                _page = _browser_cm.__enter__()
+                return resolve_in_page(_page, link)
+        return resolve_final_url(link)
+
     def out_of_time() -> bool:
         return deadline is not None and time.time() >= deadline
 
@@ -232,14 +274,22 @@ def drain_requests(errors: list, max_chapters: int = 40,
                 logger.warning(f"group heal skipped for {slug}: {e}")
 
         remaining = list(queue)
-        # Items that failed this pass go here — re-joined to the queue at
-        # flush time so they retry on a LATER run (a Cloudflare mood swing
-        # shouldn't burn all 3 attempts inside one run), never re-popped
-        # in this pass. Dropped for good after 3 failures.
+        # Items that failed this pass collect in retry_next — re-joined
+        # to the queue at flush time so they retry on a LATER run (a
+        # Cloudflare mood swing shouldn't burn all 3 attempts inside one
+        # run), never re-popped in this pass. Dropped for good after 3
+        # failures.
         retry_next = []
         attempted = 0
         last_flush = time.time()
-        activity = ""
+        activity = "drain resumed"
+        # Flush immediately so the site's "last worked" reflects this run
+        # instead of waiting up to a minute for the first item flush.
+        try:
+            flush(slug, "processing", remaining + retry_next,
+                  done, activity)
+        except Exception:
+            pass
         while (remaining and fetched < max_chapters
                and attempted < _DRAIN_ITEM_CAP and not out_of_time()):
             item = remaining.pop(0)
@@ -247,7 +297,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
             num, link = item.get("num"), item.get("extnu")
             label = f"c{num}" if num else (item.get("label") or "chapter")
             try:
-                final_url = resolve_final_url(link)
+                final_url = resolve(link)
                 doc = firestore_store.get_chapter(series_name, final_url)
                 if doc is not None:
                     done += 1  # already archived — count it, skip extraction
@@ -312,6 +362,11 @@ def drain_requests(errors: list, max_chapters: int = 40,
         flush(slug, "done" if not queue_out else "processing",
               queue_out, done, activity)
 
+    if _browser_cm is not None:
+        try:
+            _browser_cm.__exit__(None, None, None)
+        except Exception:
+            pass
     return fetched
 
 

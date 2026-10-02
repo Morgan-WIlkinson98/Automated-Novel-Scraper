@@ -72,6 +72,31 @@ def _new_context(browser):
     return context
 
 
+def resolve_in_page(page, url: str, timeout: int = 45) -> str:
+    """Resolve an extnu/redirect link inside an existing browser page.
+
+    Shared-session variant for the backfill drain: the first navigation
+    solves Cloudflare once and the clearance cookie persists in the
+    context, so subsequent resolves ride the same session instead of
+    re-rolling the challenge per link (which is what got the drain
+    rate-limited)."""
+    # Navigate and wait until DOM is loaded, not networkidle —
+    # the Cloudflare challenge may keep network busy.
+    page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+    page.wait_for_timeout(5000)
+    try:
+        page.wait_for_function(
+            f"window.location.href !== '{url}'", timeout=10000)
+    except Exception:
+        pass
+    page.wait_for_timeout(2000)
+    final_url = page.url
+    logger.info(f"Browser resolved: {url} -> {final_url}")
+    if final_url == url or 'cloudflare' in page.content().lower():
+        raise HTTPError(f"Cloudflare challenge blocked {url}")
+    return final_url
+
+
 def resolve_with_browser(url: str, timeout: int = 45) -> str:
     """
     Use Playwright to navigate to a Cloudflare-protected URL
@@ -79,13 +104,13 @@ def resolve_with_browser(url: str, timeout: int = 45) -> str:
     """
     if not url or not isinstance(url, str):
         raise ValidationError(f"Invalid URL: {url}")
-    
+
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as e:
         logger.error("Playwright is not installed. Run: pip install playwright && python -m playwright install chromium")
         raise HTTPError("Playwright not installed") from e
-    
+
     logger.info(f"Resolving with browser: {url}")
 
     try:
@@ -93,35 +118,8 @@ def resolve_with_browser(url: str, timeout: int = 45) -> str:
             browser = _launch_browser(p)
             context = _new_context(browser)
             page = context.new_page()
-            
             try:
-                # Navigate and wait until DOM is loaded, not networkidle
-                # Cloudflare challenge may keep network busy
-                response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
-                
-                # Wait for Cloudflare challenge/redirect to complete
-                page.wait_for_timeout(5000)
-                
-                # Try to wait for URL to change from original (indicating redirect)
-                try:
-                    page.wait_for_function(
-                        f"window.location.href !== '{url}'",
-                        timeout=10000
-                    )
-                except Exception:
-                    pass
-                
-                # Extra wait to let final page settle
-                page.wait_for_timeout(2000)
-                
-                final_url = page.url
-                logger.info(f"Browser resolved: {url} -> {final_url}")
-                
-                # Check if we got stuck at Cloudflare
-                if final_url == url or 'cloudflare' in page.content().lower():
-                    raise HTTPError(f"Cloudflare challenge blocked {url}")
-                
-                return final_url
+                return resolve_in_page(page, url, timeout)
             finally:
                 context.close()
                 browser.close()
