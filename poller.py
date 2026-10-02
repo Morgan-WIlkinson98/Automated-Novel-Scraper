@@ -236,9 +236,80 @@ def drain_requests(errors: list, max_chapters: int = 40,
 
     fetched = 0
     bail_drain = False
-    for i, req in enumerate(requests_):
+
+    # Pass 1 — promotions first: queue-building shouldn't starve behind a
+    # storming drain (the head request can bail the whole drain on CF
+    # blocks before later requests are even reached). Series-page
+    # navigation may also pass where extnu resolves are walled.
+    for req in requests_:
         if out_of_time():
             logger.info("Backfill time budget exhausted — deferring "
+                        "remaining work to the next run")
+            break
+        if req.get("status") not in ("pending", "error"):
+            continue
+        slug = req["slug"]
+        series_name = req.get("series") or slug
+        logger.info(f"Backfill request for {slug}: scraping series page")
+        try:
+            info = scrape_series_page(req.get("url", ""), page=_page,
+                                      stop_at=deadline)
+        except Exception as e:
+            firestore_store.update_request(slug, {
+                "status": "error", "error": str(e)[:300],
+                "autoRetries": int(req.get("autoRetries") or 0) + 1,
+            })
+            errors.append(f"backfill {slug}: {e}")
+            continue
+        if info.get("blocked") or info.get("truncated"):
+            why = ("Cloudflare challenge on series page — set NU_COOKIES"
+                   if info.get("blocked") else
+                   f"series scrape truncated — {len(info.get('chapters', []))} "
+                   "chapters so far, auto-retry next run")
+            firestore_store.update_request(slug, {
+                "status": "error", "error": why,
+                "autoRetries": int(req.get("autoRetries") or 0) + 1,
+            })
+            errors.append(f"backfill {slug}: {why.split('—')[0].strip()}")
+            continue
+        queue = [
+            {"num": c.get("number"), "extnu": c["extnu_url"],
+             "label": c.get("title", ""), "group": c.get("group")}
+            for c in info.get("chapters", []) if c.get("extnu_url")
+        ]
+        # NU's releases table is newest-first — sort ascending so a
+        # backfill fills from chapter 1 up and early chapters are
+        # readable long before the tail drains. Unnumbered rows
+        # (prologues/side stories) ride at the end.
+        queue.sort(key=lambda c: (c["num"] is None, c["num"] or 0))
+        if info.get("synopsis"):
+            firestore_store.save_series_info(
+                None, series=series_name,
+                synopsis=info["synopsis"])
+        firestore_store.update_request(slug, {
+            "status": "processing" if queue else "done",
+            "queue": queue,
+            "totalCount": len(queue), "processedCount": 0,
+        })
+        req["queue"], req["status"] = queue, "processing"
+        req["processedCount"] = 0
+        logger.info(f"Backfill {slug}: {len(queue)} chapters queued")
+        # Instant heal — chapters that already carry a nuLink get
+        # their group patched now, no need to wait for the queue to
+        # reach them across runs.
+        try:
+            healed = firestore_store.heal_chapter_groups(
+                None, series_name, info.get("chapters", []))
+            if healed:
+                logger.info(f"Healed group on {healed} archived chapters for {slug}")
+        except Exception as e:
+            logger.warning(f"group heal skipped for {slug}: {e}")
+
+    # Pass 2 — drain items, only for requests that actually have a queue.
+    drain_reqs = [r for r in requests_ if r.get("queue")]
+    for i, req in enumerate(drain_reqs):
+        if out_of_time() or bail_drain:
+            logger.info("Backfill drain stopping — deferring "
                         "remaining requests to the next run")
             break
 
@@ -246,66 +317,6 @@ def drain_requests(errors: list, max_chapters: int = 40,
         series_name = req.get("series") or slug
         queue = req.get("queue") or []
         done = int(req.get("processedCount") or 0)
-
-        if req.get("status") in ("pending", "error"):
-            logger.info(f"Backfill request for {slug}: scraping series page")
-            try:
-                info = scrape_series_page(req.get("url", ""), page=_page,
-                                          stop_at=deadline)
-            except Exception as e:
-                firestore_store.update_request(slug, {
-                    "status": "error", "error": str(e)[:300],
-                    "autoRetries": int(req.get("autoRetries") or 0) + 1,
-                })
-                errors.append(f"backfill {slug}: {e}")
-                continue
-            if info.get("blocked"):
-                firestore_store.update_request(slug, {
-                    "status": "error",
-                    "error": "Cloudflare challenge on series page — set NU_COOKIES",
-                    "autoRetries": int(req.get("autoRetries") or 0) + 1,
-                })
-                errors.append(f"backfill {slug}: Cloudflare challenge")
-                continue
-            if info.get("truncated"):
-                # Partial scrape — don't commit an incomplete queue (the
-                # tail chapters would never be discovered). Mark retryable.
-                firestore_store.update_request(slug, {
-                    "status": "error",
-                    "error": f"series scrape truncated — {len(info.get('chapters', []))} chapters so far, auto-retry next run",
-                    "autoRetries": int(req.get("autoRetries") or 0) + 1,
-                })
-                errors.append(f"backfill {slug}: scrape truncated")
-                continue
-            queue = [
-                {"num": c.get("number"), "extnu": c["extnu_url"],
-                 "label": c.get("title", ""), "group": c.get("group")}
-                for c in info.get("chapters", []) if c.get("extnu_url")
-            ]
-            # NU's releases table is newest-first — sort ascending so a
-            # backfill fills from chapter 1 up and early chapters are
-            # readable long before the tail drains. Unnumbered rows
-            # (prologues/side stories) ride at the end.
-            queue.sort(key=lambda c: (c["num"] is None, c["num"] or 0))
-            if info.get("synopsis"):
-                firestore_store.save_series_info(
-                    None, series=series_name,
-                    synopsis=info["synopsis"])
-            firestore_store.update_request(slug, {
-                "status": "processing", "queue": queue,
-                "totalCount": len(queue), "processedCount": 0,
-            })
-            logger.info(f"Backfill {slug}: {len(queue)} chapters queued")
-            # Instant heal — chapters that already carry a nuLink get
-            # their group patched now, no need to wait for the queue to
-            # reach them across runs.
-            try:
-                healed = firestore_store.heal_chapter_groups(
-                    None, series_name, info.get("chapters", []))
-                if healed:
-                    logger.info(f"Healed group on {healed} archived chapters for {slug}")
-            except Exception as e:
-                logger.warning(f"group heal skipped for {slug}: {e}")
 
         remaining = list(queue)
         # Items that failed this pass collect in retry_next — re-joined
@@ -329,7 +340,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
         # sources take ~35s each to resolve-then-fail) could burn the
         # whole drain window and starve everyone behind it, so each
         # request gets an even share of the budget still on the clock.
-        remaining_reqs = max(1, len(requests_) - i)
+        remaining_reqs = max(1, len(drain_reqs) - i)
         slice_deadline = min(
             deadline if deadline is not None else float("inf"),
             time.time() + max(60.0,
