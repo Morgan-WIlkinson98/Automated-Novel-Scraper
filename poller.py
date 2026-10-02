@@ -66,9 +66,24 @@ def main() -> int:
 
     started = time.time()
     status = "ok"
+    run_url = ""
+    if os.getenv("GITHUB_RUN_ID"):
+        run_url = (
+            f"{os.getenv('GITHUB_SERVER_URL', 'https://github.com')}/"
+            f"{os.getenv('GITHUB_REPOSITORY', '')}/actions/runs/{os.getenv('GITHUB_RUN_ID')}"
+        )
     try:
         firestore_store.init_storage()  # validate credentials up front
         conn = init_db()
+        # Heartbeat — lets the site show a run in progress. Without this,
+        # novels_meta/state only exists after a *completed* run, so
+        # long-running (or dying) jobs were invisible.
+        try:
+            firestore_store.save_run_meta(
+                firestore_store.init_storage(), status="running",
+                processed=0, errors=[], duration_s=0, run_url=run_url)
+        except Exception as e:
+            logger.warning(f"Run heartbeat failed: {e}")
         poll_once(conn, on_new_entry)
         # Leave headroom under the job's 25-min timeout for the run-meta
         # write and teardown — a cancelled step would drop everything the
@@ -81,12 +96,6 @@ def main() -> int:
         logger.exception("Poll run failed")
 
     try:
-        run_url = ""
-        if os.getenv("GITHUB_RUN_ID"):
-            run_url = (
-                f"{os.getenv('GITHUB_SERVER_URL', 'https://github.com')}/"
-                f"{os.getenv('GITHUB_REPOSITORY', '')}/actions/runs/{os.getenv('GITHUB_RUN_ID')}"
-            )
         firestore_store.save_run_meta(
             firestore_store.init_storage(),
             status=status,
