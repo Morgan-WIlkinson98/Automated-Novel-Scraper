@@ -337,7 +337,9 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
 - `novels_updates/{sha256(url)}` — feed docs (one per chapter) powering the
   site's Latest-updates tab
 - `novels_seen/{sha256(guid)}` — RSS dedup (replaces `seen_entries.db`)
-- `novels_meta/state` — last run status for the site dashboard
+- `novels_meta/state` — run status for the site dashboard: a `running`
+  heartbeat (+ Actions run-log URL) is written at run start, then the
+  final `ok`/`failed` status at run end
 - `novels_requests/{slug}` — backfill queue written by the site's
   Access-gated Pages Function ("Fetch missing chapters"). Each poll run
   drains it: `scrape_series_page` enumerates the full NU chapter table,
