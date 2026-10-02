@@ -92,7 +92,17 @@ def resolve_in_page(page, url: str, timeout: int = 45) -> str:
     page.wait_for_timeout(2000)
     final_url = page.url
     logger.info(f"Browser resolved: {url} -> {final_url}")
-    if final_url == url or 'cloudflare' in page.content().lower():
+    # A resolved link can still land on a CF interstitial — but many
+    # legit chapter sites also serve "cloudflare" strings in their HTML
+    # (CDN scripts, protection badges), which made the old body-substring
+    # check a false-positive factory. Real interstitials identify by
+    # title: "Just a moment…" / "Attention Required!".
+    try:
+        title = (page.title() or "").lower()
+    except Exception:
+        title = ""
+    if final_url == url or "just a moment" in title \
+            or "attention required" in title:
         raise HTTPError(f"Cloudflare challenge blocked {url}")
     return final_url
 
@@ -158,10 +168,16 @@ def get_page_html(url: str, timeout: int = 60) -> str:
                 
                 final_url = page.url
                 logger.info(f"Browser fetched HTML: {url} -> {final_url}")
-                
-                if 'cloudflare' in page.content().lower():
+
+                # Title-based interstitial check — legit pages can carry
+                # "cloudflare" strings without being a challenge.
+                try:
+                    title = (page.title() or "").lower()
+                except Exception:
+                    title = ""
+                if "just a moment" in title or "attention required" in title:
                     raise HTTPError(f"Cloudflare challenge blocked {url}")
-                
+
                 return page.content()
             finally:
                 context.close()
