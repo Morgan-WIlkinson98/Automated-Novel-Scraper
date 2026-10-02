@@ -16,7 +16,7 @@ from rss.rss_watcher import run_forever, load_xml_exports
 from scraping.link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
 from scraping.generic_extractor import extract_chapter
 from scraping.site_overrides import extract_with_override
-from data.storage import init_storage, save_chapter, save_series_info, get_series_info
+from data.storage import init_storage, save_chapter, save_series_info, get_series_info, heal_chapter_groups
 from scraping.politeness import polite_get
 from core.exceptions import DatabaseError, HTTPError, ValidationError
 from core.logging_config import setup_logging
@@ -51,6 +51,15 @@ def _sync_series_info_async(series_name: str, series_url: str):
             synopsis=data['synopsis'],
             available_chapters=json.dumps(data['chapters'])
         )
+        # Self-heal — the fresh release table maps each chapter's NU link
+        # to its group, so archived chapters saved before group capture
+        # get patched in place instead of needing a migration.
+        try:
+            healed = heal_chapter_groups(conn, series_name, data['chapters'])
+            if healed:
+                logger.info(f"Healed group info on {healed} chapters for {series_name}")
+        except Exception as e:
+            logger.warning(f"Chapter group heal failed for {series_name}: {e}")
         conn.close()
         logger.info(f"Synced {len(data['chapters'])} chapters for {series_name}")
     except Exception as e:
@@ -152,6 +161,7 @@ def handle_new_entry(entry, is_import=False):
                 text=result.text,
                 method=result.method,
                 group=group,
+                nu_link=feed_link,
             )
 
             # Update the latest chapter reference for this series from the RSS feed

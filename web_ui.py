@@ -647,6 +647,7 @@ def _process_chapter_downloads(series_name: str, chapters: list, job_id: str):
                 text=result.text,
                 method=result.method,
                 group=ch.get('group'),
+                nu_link=extnu_url,
             )
             _download_jobs[job_id]['done'] = idx
             _download_jobs[job_id]['chapter_urls'][extnu_url] = final_url

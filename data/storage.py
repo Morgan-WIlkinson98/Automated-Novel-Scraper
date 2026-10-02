@@ -23,6 +23,7 @@ _EXTRA_SERIES_COLUMNS = {
 
 _EXTRA_CHAPTER_COLUMNS = {
     'translator_group': 'TEXT',
+    'nu_link': 'TEXT',
 }
 
 
@@ -102,9 +103,11 @@ def init_storage(path=None):
 
 
 def save_chapter(conn, url, series, chapter_label, title, text, method,
-                 group=None):
+                 group=None, nu_link=None):
     """Save a chapter to the database. `group` is the translator/release
-    group name from the NU releases table (None for RSS-sourced saves)."""
+    group name from the NU releases table (None for RSS-sourced saves).
+    `nu_link` is the NU /extnu/ release link — kept so group data can be
+    healed onto the row later without re-resolving the redirect."""
     try:
         # Validate inputs
         if not url or not isinstance(url, str):
@@ -116,14 +119,14 @@ def save_chapter(conn, url, series, chapter_label, title, text, method,
 
         if db_manager.db_type == "firestore":
             from data import firestore_store
-            return firestore_store.save_chapter(conn, url, series, chapter_label, title, text, method, group)
+            return firestore_store.save_chapter(conn, url, series, chapter_label, title, text, method, group, nu_link)
         elif db_manager.db_type == "sqlite":
             _ensure_chapter_columns(conn)
             conn.execute("""
                 INSERT OR IGNORE INTO chapters
-                (url, series, chapter_label, title, text, extraction_method, fetched_at, translator_group)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (url, series, chapter_label, title, text, method, time.time(), group))
+                (url, series, chapter_label, title, text, extraction_method, fetched_at, translator_group, nu_link)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (url, series, chapter_label, title, text, method, time.time(), group, nu_link))
             conn.commit()
         else:
             # PostgreSQL uses different syntax for INSERT ... ON CONFLICT
@@ -140,6 +143,44 @@ def save_chapter(conn, url, series, chapter_label, title, text, method,
     except Exception as e:
         logger.error(f"Failed to save chapter {url}: {e}")
         raise DatabaseError(f"Failed to save chapter: {e}") from e
+
+
+def heal_chapter_groups(conn, series, release_rows):
+    """Self-heal — backfill translator group onto chapters whose NU
+    release link is known but that predate group capture. Called after
+    a series-page sync refreshes the release table, so the database
+    heals itself on natural updates instead of needing a migration.
+    Returns the number of chapters patched."""
+    db_manager = get_database_manager()
+    if db_manager.db_type == "firestore":
+        from data import firestore_store
+        return firestore_store.heal_chapter_groups(conn, series, release_rows)
+    if db_manager.db_type != "sqlite":
+        return 0
+    _ensure_chapter_columns(conn)
+    group_by_link = {
+        c.get('extnu_url'): c.get('group')
+        for c in (release_rows or [])
+        if c.get('extnu_url') and c.get('group')
+    }
+    if not group_by_link:
+        return 0
+    rows = conn.execute(
+        """SELECT url, nu_link FROM chapters
+           WHERE series = ? AND (translator_group IS NULL OR translator_group = '')""",
+        (series,),
+    ).fetchall()
+    healed = 0
+    for url, nu_link in rows:
+        g = group_by_link.get(nu_link)
+        if g:
+            conn.execute(
+                "UPDATE chapters SET translator_group = ? WHERE url = ?",
+                (g, url))
+            healed += 1
+    if healed:
+        conn.commit()
+    return healed
 
 
 def save_series_info(

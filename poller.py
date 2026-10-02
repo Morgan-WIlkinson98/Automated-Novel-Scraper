@@ -202,6 +202,16 @@ def drain_requests(errors: list, max_chapters: int = 40,
                 "totalCount": len(queue), "processedCount": 0,
             })
             logger.info(f"Backfill {slug}: {len(queue)} chapters queued")
+            # Instant heal — chapters that already carry a nuLink get
+            # their group patched now, no need to wait for the queue to
+            # reach them across runs.
+            try:
+                healed = firestore_store.heal_chapter_groups(
+                    None, series_name, info.get("chapters", []))
+                if healed:
+                    logger.info(f"Healed group on {healed} archived chapters for {slug}")
+            except Exception as e:
+                logger.warning(f"group heal skipped for {slug}: {e}")
 
         remaining = list(queue)
         attempted = 0
@@ -213,8 +223,21 @@ def drain_requests(errors: list, max_chapters: int = 40,
             num, link = item.get("num"), item.get("extnu")
             try:
                 final_url = resolve_final_url(link)
-                if firestore_store.has_chapter(series_name, final_url):
+                doc = firestore_store.get_chapter(series_name, final_url)
+                if doc is not None:
                     done += 1  # already archived — count it, skip extraction
+                    # Lazy heal — docs archived before group/nuLink existed
+                    # get patched as the queue walks past them; no migration.
+                    if (item.get("group") and not doc.get("group")) \
+                            or not doc.get("nuLink"):
+                        try:
+                            firestore_store.patch_chapter_fields(
+                                series_name, final_url,
+                                group=item.get("group")
+                                if not doc.get("group") else None,
+                                nu_link=link if not doc.get("nuLink") else None)
+                        except Exception as e:
+                            logger.debug(f"heal patch failed for {final_url}: {e}")
                 else:
                     result = extract_chapter(final_url)
                     if result.passed_quality_check:
@@ -225,6 +248,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
                             title=result.title or "Untitled",
                             text=result.text, method=result.method,
                             group=item.get("group"),
+                            nu_link=link,
                         )
                         done += 1
                         fetched += 1

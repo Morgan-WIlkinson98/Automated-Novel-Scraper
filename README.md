@@ -328,12 +328,18 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
 - `novels/{slug}` — series docs (`name`, `url`, `synopsis`, `latestLabel`,
   `latestLink`, `chapterCount`, `lastSynced`, …)
 - `novels/{slug}/chapters/{sha256(url)}` — chapter docs (`title`, `label`,
-  `text`, `method`, `group`, `fetchedAt`) — insert-if-absent, so runs are
-  idempotent. `group` is the NU releases-table translator group (the
-  `/group/` link in the release row); a series can hold several groups'
-  versions of the same chapter number as separate docs — the site groups,
-  filters, and sorts by it. RSS-path saves get `group` by matching the
-  entry's extnu link against the series' cached `availableChapters` list.
+  `text`, `method`, `group`, `nuLink`, `fetchedAt`) — insert-if-absent,
+  so runs are idempotent. `group` is the NU releases-table translator
+  group (the `/group/` link in the release row); a series can hold
+  several groups' versions of the same chapter number as separate docs —
+  the site groups, filters, and sorts by it. RSS-path saves get `group`
+  by matching the entry's extnu link against the series' cached
+  `availableChapters` list; `nuLink` stores that release link so group
+  data can be healed later without re-resolving redirects. Group data is
+  self-healing rather than migrated: every series sync (runs on each new
+  RSS release) patches archived chapters whose `nuLink` is known but
+  `group` is empty, and the backfill drain patches missing `group`/
+  `nuLink` on already-archived docs as the queue walks past them.
 - `novels_updates/{sha256(url)}` — feed docs (one per chapter) powering the
   site's Latest-updates tab
 - `novels_seen/{sha256(guid)}` — RSS dedup (replaces `seen_entries.db`)

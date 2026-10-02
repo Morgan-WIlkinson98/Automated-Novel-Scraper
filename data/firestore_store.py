@@ -287,22 +287,109 @@ def mark_failed(conn, guid: str, link: str, error: str = ""):
 def has_chapter(series: str, url: str) -> bool:
     """True if a chapter doc already exists for this final URL — lets the
     backfill skip re-extracting chapters we already archived."""
+    return get_chapter(series, url) is not None
+
+
+def get_chapter(series: str, url: str):
+    """Chapter doc fields for a final URL, or None — the drain loop uses
+    this both to skip re-extraction and to spot docs worth lazy-healing."""
     resp = _req(
         "GET", f"{SERIES_COL}/{_slugify(series)}/chapters/{_hash(url)}")
     if resp.status_code == 404:
-        return False
+        return None
     if not resp.ok:
         raise DatabaseError(
             f"Firestore chapter read failed {resp.status_code}: {resp.text[:200]}")
+    return {k: _from_field(v) for k, v in resp.json().get("fields", {}).items()}
+
+
+def patch_chapter_fields(series: str, url: str, group=None, nu_link=None):
+    """Merge `group`/`nuLink` onto an existing chapter doc — the lazy-heal
+    path for docs written before those fields existed. Also patches the
+    novels_updates feed entry (same doc id) so the site's Latest tab
+    heals too. No-ops when there's nothing to write."""
+    fields = {}
+    if group:
+        fields["group"] = group
+    if nu_link:
+        fields["nuLink"] = nu_link
+    if not fields or not url:
+        return False
+    chapter_id = _hash(url)
+    params = [("updateMask.fieldPaths", k) for k in fields.keys()]
+    resp = _req(
+        "PATCH", f"{SERIES_COL}/{_slugify(series)}/chapters/{chapter_id}",
+        params=params, json={"fields": _fields(fields)})
+    if resp.status_code == 404:
+        return False  # doc vanished between the read and the patch
+    if not resp.ok:
+        raise DatabaseError(
+            f"Firestore chapter patch failed {resp.status_code}: {resp.text[:200]}")
+    if group:
+        # Feed doc may not exist for very old chapters — 404 is fine.
+        _req("PATCH", f"{UPDATES_COL}/{chapter_id}",
+             params=[("updateMask.fieldPaths", "group")],
+             json={"fields": _fields({"group": group})})
     return True
 
 
+def heal_chapter_groups(conn, series: str, release_rows, limit: int = 400):
+    """Self-heal — backfill `group` onto chapter docs that know their NU
+    release link (`nuLink`, saved at fetch time) but predate group
+    capture. Called after a series-page sync refreshes the release
+    table, so healing costs a couple of masked list calls + PATCHes and
+    no link resolution. Returns the number of docs patched."""
+    group_by_extnu = {
+        c.get("extnu_url"): c.get("group")
+        for c in (release_rows or [])
+        if c.get("extnu_url") and c.get("group")
+    }
+    if not group_by_extnu:
+        return 0
+    slug = _slugify(series)
+    healed = 0
+    page_token = ""
+    while True:
+        params = [
+            ("pageSize", "300"),
+            ("mask.fieldPaths", "url"),
+            ("mask.fieldPaths", "nuLink"),
+            ("mask.fieldPaths", "group"),
+        ]
+        if page_token:
+            params.append(("pageToken", page_token))
+        resp = _req("GET", f"{SERIES_COL}/{slug}/chapters", params=params)
+        if not resp.ok:
+            break
+        payload = resp.json()
+        for d in payload.get("documents", []):
+            f = {k: _from_field(v) for k, v in d.get("fields", {}).items()}
+            if f.get("group"):
+                continue
+            g = group_by_extnu.get(f.get("nuLink") or "")
+            if not g:
+                continue
+            try:
+                patch_chapter_fields(series, f.get("url"), group=g)
+                healed += 1
+            except Exception as e:
+                logger.warning(f"group heal failed for {f.get('url')}: {e}")
+            if healed >= limit:
+                return healed
+        page_token = payload.get("nextPageToken")
+        if not page_token:
+            break
+    return healed
+
+
 def save_chapter(conn, url, series, chapter_label, title, text, method,
-                 group=None):
+                 group=None, nu_link=None):
     """Save a chapter (insert-if-absent, same semantics as INSERT OR IGNORE).
     `group` is the NU releases-table group name — a series can carry
     several groups' versions of the same chapter number as distinct docs
-    (dedup is by final URL)."""
+    (dedup is by final URL). `nu_link` is the NU /extnu/ release link —
+    stored so group data can be healed onto the doc later without
+    re-resolving the redirect."""
     try:
         if not url or not isinstance(url, str):
             raise ValidationError("URL cannot be empty")
@@ -324,6 +411,7 @@ def save_chapter(conn, url, series, chapter_label, title, text, method,
                 "text": text,
                 "method": method or "",
                 "group": group or "",
+                "nuLink": nu_link or "",
                 "fetchedAt": time.time(),
             })},
         )
