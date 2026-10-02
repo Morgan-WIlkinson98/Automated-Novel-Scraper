@@ -361,8 +361,10 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   drains it in two passes: pass 1 promotes `pending`/retryable-`error`
   requests first — `scrape_series_page` enumerates the full NU chapter
   table (challenge-aware first-page wait, `#myTable` row waits per page,
-  and a `stop_at` bound — a truncated scrape marks the request retryable
-  rather than committing a partial queue) — so queue-building can never
+  and a `stop_at` bound — a truncated scrape persists a `scrapePage`
+  cursor + `pendingChapters` on the request so the next run resumes
+  mid-table instead of restarting; pauses don't burn auto-retries) — so
+  queue-building can never
   starve behind a request that's eating CF blocks; pass 2 then resolves +
   extracts missing chapters (already-archived
   chapters skip extraction via a `get_chapter` check, which also lets the

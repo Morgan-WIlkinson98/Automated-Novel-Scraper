@@ -144,15 +144,18 @@ def _extract_synopsis(html: str) -> str:
 
 
 def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200,
-                       page=None, stop_at=None) -> Dict:
+                       page=None, stop_at=None, start_pg: int = 2) -> Dict:
     """Scrape a NovelUpdates series page for synopsis and all paginated chapters.
 
     `page` lets a caller inside a long-lived Playwright session (the
     backfill drain) reuse it — sync_playwright() can't start again while
     another instance is already running on this thread.
     `stop_at` (epoch seconds) bounds total scrape time — pagination stops
-    early and the result is flagged `truncated` so the caller can retry
-    on the next run instead of one huge series eating a whole job."""
+    early and the result is flagged `truncated` (with `stopped_pg`, the
+    page to resume from) so the caller can retry on the next run instead
+    of one huge series eating a whole job. `start_pg` resumes a paused
+    scrape — page 1 still loads (for the max-page count) but pagination
+    begins there instead of page 2."""
     import contextlib
     from scraping.browser import get_browser_page
 
@@ -163,6 +166,7 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200
     chapters = []
     seen_urls = set()
     truncated = False
+    stopped_pg = start_pg
 
     def _challenge_title() -> bool:
         try:
@@ -204,7 +208,8 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200
         logger.info(f"Detected {last_page} chapter pages for {base_url}")
         
         # Follow paginated chapter tables (?pg=2#myTable, etc.) until no new chapters
-        for pg in range(2, last_page + 1):
+        for pg in range(start_pg, last_page + 1):
+            stopped_pg = pg
             if stop_at is not None and time.time() >= stop_at:
                 logger.warning(
                     f"Scrape time limit hit at page {pg} for {base_url} — truncated")
@@ -222,7 +227,11 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200
                     pass
                 page.wait_for_timeout(1500)
             except Exception as e:
+                # A load failure mid-pagination means the table is
+                # incomplete — flag truncated so the caller resumes at
+                # this page instead of committing a partial queue.
                 logger.warning(f"Failed to load page {pg}: {e}")
+                truncated = True
                 break
 
             html = page.content()
@@ -251,6 +260,7 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200
         'synopsis': synopsis,
         'chapters': chapters,
         'truncated': truncated,
+        'stopped_pg': stopped_pg,
     }
 
 
