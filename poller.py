@@ -282,7 +282,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
             for c in info.get("chapters", []):
                 found.setdefault(c.get("extnu_url"), c)
             firestore_store.update_request(slug, {
-                "status": "error",
+                "status": "pending",
                 "error": f"series scrape paused at page {info.get('stopped_pg')} "
                          f"({len(found)} chapters so far) — resumes next run",
                 "scrapePage": info.get("stopped_pg") or 2,
