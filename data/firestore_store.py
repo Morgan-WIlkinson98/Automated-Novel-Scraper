@@ -655,8 +655,10 @@ def update_request(slug: str, fields: dict):
             f"Firestore request write failed {resp.status_code}: {resp.text[:200]}")
 
 
-def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: float = 0.0, run_url: str = None):
-    """Record the outcome of a poller run for the site dashboard."""
+def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: float = 0.0, run_url: str = None, phase: str = ""):
+    """Record the outcome of a poller run for the site dashboard.
+    `phase` narrates what the run is doing while status == "running"
+    (setup → polling RSS → draining backfill)."""
     try:
         resp = _req("PATCH", f"{META_COL}/{META_DOC}", json={"fields": _fields({
             "lastPollAt": _iso_now(),
@@ -665,6 +667,7 @@ def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: fl
             "errors": (errors or [])[-10:],
             "durationS": duration_s,
             "runUrl": run_url or "",
+            "phase": phase or "",
         })})
         if not resp.ok:
             raise DatabaseError(f"Firestore meta write failed {resp.status_code}: {resp.text[:200]}")
