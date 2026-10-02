@@ -336,10 +336,14 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
 - `novels_requests/{slug}` — backfill queue written by the site's
   Access-gated Pages Function ("Fetch missing chapters"). Each poll run
   drains it: `scrape_series_page` enumerates the full NU chapter table,
-  then the poller resolves + extracts missing chapters (max 40 new
-  chapters per run, already-archived chapters skip extraction via a
-  `has_chapter` check). Status flows `pending → processing → done|error`
-  and the site displays it live.
+  then the poller resolves + extracts missing chapters (already-archived
+  chapters skip extraction via a `has_chapter` check). Every request gets
+  a bounded slice per run (FIFO by `requestedAt`, max 40 new chapters
+  total and `DRAIN_ITEMS_PER_REQUEST`=40 items attempted per request),
+  progress is flushed to Firestore every 60s, and the whole drain is
+  time-boxed by `DRAIN_TIME_BUDGET_S` (default 1200s) so the 25-min job
+  timeout can't kill a run before progress is persisted. Status flows
+  `pending → processing → done|error` and the site displays it live.
 
 ### Migrating existing data
 
