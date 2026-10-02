@@ -368,9 +368,12 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   repeated challenge rolls to trip CF's rate limit); a crashed session
   rebuilds up to 3 times before items fall back to the standalone
   resolver. Failed items
-  re-queue for the next run — up to 3 attempts, then dropped — and
-  Cloudflare-blocked resolves trigger a cool-down pause so rate-limit
-  bursts don't burn the slice. Every request gets
+  re-queue for the next run — up to 3 attempts, then dropped.
+  Cloudflare-blocked resolves are treated as transient infrastructure
+  failures instead: they re-queue *without* consuming an attempt, pause
+  20s to let the rate-limit decay, and after 4 consecutive blocks the
+  drain bails entirely until the next run rather than keeping the IP
+  flagged. Every request gets
   a bounded slice per run (FIFO by `requestedAt`, max 40 new chapters
   total and `DRAIN_ITEMS_PER_REQUEST`=40 items attempted per request),
   progress is flushed to Firestore every 60s, and the whole drain is

@@ -221,6 +221,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
         firestore_store.update_request(slug, fields)
 
     fetched = 0
+    bail_drain = False
     for req in requests_:
         if out_of_time():
             logger.info("Backfill time budget exhausted — deferring "
@@ -287,6 +288,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
         # failures.
         retry_next = []
         attempted = 0
+        cf_streak = 0
         last_flush = time.time()
         activity = "drain resumed"
         # Flush immediately so the site's "last worked" reflects this run
@@ -347,18 +349,36 @@ def drain_requests(errors: list, max_chapters: int = 40,
             else:
                 cf_blocked = False
                 failed = not (doc is not None or result.passed_quality_check)
+            if cf_blocked:
+                cf_streak += 1
+            else:
+                cf_streak = 0
             if failed:
-                item["attempts"] = int(item.get("attempts") or 0) + 1
-                if item["attempts"] < 3:
+                if cf_blocked:
+                    # Transient NU challenge storm — the item isn't
+                    # actually bad, so it doesn't burn an attempt.
                     retry_next.append(item)
                 else:
-                    activity = f"{label} dropped after 3 failures"
-                    errors.append(f"backfill {slug}: dropped {link} after 3 failures")
+                    item["attempts"] = int(item.get("attempts") or 0) + 1
+                    if item["attempts"] < 3:
+                        retry_next.append(item)
+                    else:
+                        activity = f"{label} dropped after 3 failures"
+                        errors.append(f"backfill {slug}: dropped {link} after 3 failures")
             time.sleep(1.5)  # politeness between fetches
             if cf_blocked:
                 # Rapid-fire resolves trip CF's challenge rate limit —
                 # cool off so the burst doesn't burn the whole slice.
                 time.sleep(20)
+                if cf_streak >= 4:
+                    # NU is walling every resolve — further attempts just
+                    # keep the IP flagged. Flush and bail the drain; the
+                    # queue rides again on the next run after cooldown.
+                    logger.warning(
+                        f"{cf_streak} consecutive Cloudflare blocks — "
+                        "bailing drain until next run")
+                    bail_drain = True
+                    break
             if time.time() - last_flush >= _DRAIN_FLUSH_S:
                 flush(slug, "processing", remaining + retry_next,
                       done, activity)
@@ -367,6 +387,8 @@ def drain_requests(errors: list, max_chapters: int = 40,
         queue_out = remaining + retry_next
         flush(slug, "done" if not queue_out else "processing",
               queue_out, done, activity)
+        if bail_drain:
+            break
 
     if _browser_cm is not None:
         try:

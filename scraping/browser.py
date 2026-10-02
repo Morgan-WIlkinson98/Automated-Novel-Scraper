@@ -90,6 +90,24 @@ def resolve_in_page(page, url: str, timeout: int = 45) -> str:
     except Exception:
         pass
     page.wait_for_timeout(2000)
+
+    def _still_challenged() -> bool:
+        try:
+            u = page.url
+            t = (page.title() or "").lower()
+        except Exception:
+            return False
+        return u == url or "just a moment" in t \
+            or "attention required" in t
+
+    # A flagged IP can keep the challenge churning well past the first
+    # waits — give it up to ~30s more (2s polls) before declaring blocked.
+    if _still_challenged():
+        for _ in range(15):
+            page.wait_for_timeout(2000)
+            if not _still_challenged():
+                break
+
     final_url = page.url
     logger.info(f"Browser resolved: {url} -> {final_url}")
     # A resolved link can still land on a CF interstitial — but many
