@@ -363,7 +363,14 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   table (challenge-aware first-page wait, `#myTable` row waits per page,
   and a `stop_at` bound — a truncated scrape persists a `scrapePage`
   cursor + `pendingChapters` on the request so the next run resumes
-  mid-table instead of restarting; pauses don't burn auto-retries) — so
+  mid-table instead of restarting; pauses don't burn auto-retries) — and
+  **discovered chapters fold straight into the live `queue`** rather
+  than waiting for the full table, so a series keeps draining the pages
+  it already found while pagination resumes across runs (`processedLinks`
+  records drained extnu links so resumed scrapes never requeue them;
+  `totalCount` = done + still-queued, growing as discovery continues).
+  A Cloudflare wall on a *resumed* scrape is treated as a pause, not an
+  error — no autoRetries burned, queue keeps draining — so
   queue-building can never
   starve behind a request that's eating CF blocks; pass 2 then resolves +
   extracts missing chapters (already-archived
