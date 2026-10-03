@@ -224,17 +224,41 @@ def drain_requests(errors: list, max_chapters: int = 40,
     def out_of_time() -> bool:
         return deadline is not None and time.time() >= deadline
 
-    def flush(slug, status, remaining, done, activity=None):
+    def flush(slug, status, remaining, done, activity=None,
+              processed=None):
         fields = {
             "status": status, "queue": remaining,
             "processedCount": done,
+            # Total = done + still-queued. Grows while a paused series
+            # keeps discovering chapters, so the site's bar stays real.
+            "totalCount": done + len(remaining),
             "lastRunAt": firestore_store._iso_now(),
         }
+        if processed is not None:
+            fields["processedLinks"] = sorted(processed)
         if activity is not None:
             # One-line narration for the site's progress card —
             # e.g. "saved c45" / "c46 already archived".
             fields["activity"] = activity
         firestore_store.update_request(slug, fields)
+
+    def merge_queue(req, chapters):
+        """Fold newly discovered chapters into the request's live queue —
+        keeps undrained items, skips links already queued or processed
+        in earlier runs, and re-sorts oldest-first."""
+        queue = list(req.get("queue") or [])
+        seen = {i.get("extnu") for i in queue}
+        seen |= set(req.get("processedLinks") or [])
+        for c in chapters:
+            link = c.get("extnu_url")
+            if link and link not in seen:
+                queue.append({
+                    "num": c.get("number"), "extnu": link,
+                    "label": c.get("title", ""), "group": c.get("group"),
+                })
+                seen.add(link)
+        queue.sort(key=lambda i: (i["num"] is None, i["num"] or 0))
+        return queue
 
     fetched = 0
     bail_drain = False
@@ -248,7 +272,11 @@ def drain_requests(errors: list, max_chapters: int = 40,
             logger.info("Backfill time budget exhausted — deferring "
                         "remaining work to the next run")
             break
-        if req.get("status") not in ("pending", "error"):
+        # Fresh promotions AND paused series still carrying a scrapePage
+        # cursor — the latter already have a queue draining beneath the
+        # resume, so they aren't skipped just for being "processing".
+        if req.get("status") not in ("pending", "error") \
+                and not req.get("scrapePage"):
             continue
         slug = req["slug"]
         series_name = req.get("series") or slug
@@ -265,34 +293,61 @@ def drain_requests(errors: list, max_chapters: int = 40,
             errors.append(f"backfill {slug}: {e}")
             continue
         if info.get("blocked"):
-            firestore_store.update_request(slug, {
-                "status": "error",
-                "error": "Cloudflare challenge on series page — set NU_COOKIES",
-                "autoRetries": int(req.get("autoRetries") or 0) + 1,
-            })
+            if req.get("scrapePage") or req.get("pendingChapters") \
+                    or req.get("queue"):
+                # Mid-scrape wall on a *resumed* series — a pause, not a
+                # failure: don't burn autoRetries. Fold whatever the
+                # paused scrape already discovered into the live queue
+                # so the drain still makes progress this run.
+                queue = merge_queue(req, req.get("pendingChapters") or [])
+                status = "processing" if queue else "pending"
+                firestore_store.update_request(slug, {
+                    "status": status,
+                    "error": "Cloudflare wall on series page — pagination "
+                             "resumes next run; queue keeps draining",
+                    "queue": queue,
+                    "totalCount": int(req.get("processedCount") or 0)
+                                  + len(queue),
+                })
+                req["queue"], req["status"] = queue, status
+            else:
+                firestore_store.update_request(slug, {
+                    "status": "error",
+                    "error": "Cloudflare challenge on series page — set NU_COOKIES",
+                    "autoRetries": int(req.get("autoRetries") or 0) + 1,
+                })
             errors.append(f"backfill {slug}: Cloudflare challenge")
             continue
         if info.get("truncated"):
             # Paused mid-table — persist the resume point + the chapters
             # found so far so a giant series doesn't have to fit inside
-            # one run. Not an autoRetries failure: a pause isn't one.
+            # one run, AND fold the discoveries straight into the live
+            # queue so the drain works them now instead of idling until
+            # the table finishes. Not an autoRetries failure: a pause
+            # isn't one.
             found = {c.get("extnu_url"): c
                      for c in (req.get("pendingChapters") or [])
                      if c.get("extnu_url")}
             for c in info.get("chapters", []):
                 found.setdefault(c.get("extnu_url"), c)
+            queue = merge_queue(req, found.values())
+            status = "processing" if queue else "pending"
             firestore_store.update_request(slug, {
-                "status": "pending",
+                "status": status,
                 "error": f"series scrape paused at page {info.get('stopped_pg')} "
-                         f"({len(found)} chapters so far) — resumes next run",
+                         f"({len(found)} chapters discovered) — resumes next run",
                 "scrapePage": info.get("stopped_pg") or 2,
                 "pendingChapters": list(found.values()),
                 "pendingSynopsis": info.get("synopsis") or "",
+                "queue": queue,
+                "totalCount": int(req.get("processedCount") or 0) + len(queue),
             })
+            req["queue"], req["status"] = queue, status
             errors.append(f"backfill {slug}: scrape paused "
                           f"at pg {info.get('stopped_pg')}")
             continue
-        # Complete scrape — fold in chapters carried over from paused runs.
+        # Complete scrape — fold in chapters carried over from paused
+        # runs, preserving the undrained queue + already-processed links.
         all_chapters = {c.get("extnu_url"): c
                         for c in (req.get("pendingChapters") or [])
                         if c.get("extnu_url")}
@@ -300,28 +355,23 @@ def drain_requests(errors: list, max_chapters: int = 40,
             all_chapters.setdefault(c.get("extnu_url"), c)
         chapters_found = list(all_chapters.values())
         synopsis = info.get("synopsis") or req.get("pendingSynopsis") or ""
-        queue = [
-            {"num": c.get("number"), "extnu": c["extnu_url"],
-             "label": c.get("title", ""), "group": c.get("group")}
-            for c in chapters_found if c.get("extnu_url")
-        ]
-        # NU's releases table is newest-first — sort ascending so a
-        # backfill fills from chapter 1 up and early chapters are
-        # readable long before the tail drains. Unnumbered rows
-        # (prologues/side stories) ride at the end.
-        queue.sort(key=lambda c: (c["num"] is None, c["num"] or 0))
+        # NU's releases table is newest-first — merge_queue re-sorts
+        # ascending so a backfill fills from chapter 1 up and early
+        # chapters are readable long before the tail drains. Unnumbered
+        # rows (prologues/side stories) ride at the end.
+        queue = merge_queue(req, chapters_found)
         if synopsis:
             firestore_store.save_series_info(
                 None, series=series_name,
                 synopsis=synopsis)
+        status = "processing" if queue else "done"
         firestore_store.update_request(slug, {
-            "status": "processing" if queue else "done",
+            "status": status,
             "queue": queue,
-            "totalCount": len(queue), "processedCount": 0,
+            "totalCount": int(req.get("processedCount") or 0) + len(queue),
             "scrapePage": "", "pendingChapters": [], "pendingSynopsis": "",
         })
-        req["queue"], req["status"] = queue, "processing"
-        req["processedCount"] = 0
+        req["queue"], req["status"] = queue, status
         logger.info(f"Backfill {slug}: {len(queue)} chapters queued")
         # Instant heal — chapters that already carry a nuLink get
         # their group patched now, no need to wait for the queue to
@@ -346,6 +396,9 @@ def drain_requests(errors: list, max_chapters: int = 40,
         series_name = req.get("series") or slug
         queue = req.get("queue") or []
         done = int(req.get("processedCount") or 0)
+        # Extnu links already drained (saved/archived/dropped) — the
+        # series-page resume merges use this to never requeue them.
+        processed_links = set(req.get("processedLinks") or [])
 
         remaining = list(queue)
         # Items that failed this pass collect in retry_next — re-joined
@@ -362,7 +415,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
         # instead of waiting up to a minute for the first item flush.
         try:
             flush(slug, "processing", remaining + retry_next,
-                  done, activity)
+                  done, activity, processed_links)
         except Exception:
             pass
         # Fair-share slice — a request whose items are slow (dead
@@ -387,6 +440,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
                 doc = firestore_store.get_chapter(series_name, final_url)
                 if doc is not None:
                     done += 1  # already archived — count it, skip extraction
+                    processed_links.add(link)
                     activity = f"{label} already archived"
                     # Lazy heal — docs archived before group/nuLink existed
                     # get patched as the queue walks past them; no migration.
@@ -415,6 +469,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
                         )
                         done += 1
                         fetched += 1
+                        processed_links.add(link)
                         activity = f"saved {label}"
                     else:
                         activity = f"{label} extraction failed"
@@ -442,6 +497,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
                         retry_next.append(item)
                     else:
                         activity = f"{label} dropped after 3 failures"
+                        processed_links.add(link)
                         errors.append(f"backfill {slug}: dropped {link} after 3 failures")
             time.sleep(1.5)  # politeness between fetches
             if cf_blocked:
@@ -459,12 +515,12 @@ def drain_requests(errors: list, max_chapters: int = 40,
                     break
             if time.time() - last_flush >= _DRAIN_FLUSH_S:
                 flush(slug, "processing", remaining + retry_next,
-                      done, activity)
+                      done, activity, processed_links)
                 last_flush = time.time()
 
         queue_out = remaining + retry_next
         flush(slug, "done" if not queue_out else "processing",
-              queue_out, done, activity)
+              queue_out, done, activity, processed_links)
         if bail_drain:
             break
 
