@@ -467,74 +467,100 @@ def drain_requests(errors: list, max_chapters: int = 40,
             attempted += 1
             num, link = item.get("num"), item.get("extnu")
             label = f"c{num}" if num else (item.get("label") or "chapter")
+            succeeded = False
             try:
-                final_url = resolve(link)
-                doc = firestore_store.get_chapter(series_name, final_url)
+                # Dedup on the NU release link itself — every save stamps
+                # nuLink (RSS pipeline, earlier backfills, wuxiaworld
+                # saves), so this catches chapters archived by ANY source
+                # for this release without an extnu resolve. Docs old
+                # enough to lack nuLink get caught by the final-URL check
+                # in the fallback path below.
+                doc = firestore_store.get_chapter_by_nulink(series_name, link)
                 if doc is not None:
-                    done += 1  # already archived — count it, skip extraction
+                    done += 1  # already archived — count it, skip fetching
                     processed_links.add(link)
                     activity = f"{label} already archived"
-                    # Lazy heal — docs archived before group/nuLink existed
-                    # get patched as the queue walks past them; no migration.
-                    if (item.get("group") and not doc.get("group")) \
-                            or not doc.get("nuLink"):
+                    if item.get("group") and not doc.get("group"):
                         try:
                             firestore_store.patch_chapter_fields(
-                                series_name, final_url,
-                                group=item.get("group")
-                                if not doc.get("group") else None,
-                                nu_link=link if not doc.get("nuLink") else None)
-                            activity = f"{label} healed (group/nuLink)"
+                                series_name, doc.get("url"),
+                                group=item.get("group"))
+                            activity = f"{label} healed (group)"
                         except Exception as e:
-                            logger.debug(f"heal patch failed for {final_url}: {e}")
+                            logger.debug(f"heal patch failed for {link}: {e}")
+                    succeeded = True
                 else:
-                    result = extract_chapter(final_url, page=_page)
-                    if result.passed_quality_check:
+                    # Backfills hit wuxiaworld.eu FIRST — anonymous JSON
+                    # API, no Cloudflare, far more forgiving than
+                    # translator hosts for bulk work. The resolve+extract
+                    # path is now the fallback (RSS items keep it
+                    # primary — they come in with fresh links).
+                    alt = wuxiaworld.fetch_chapter(
+                        series_name, num, wx_cache)
+                    if alt:
                         save_chapter(
-                            None, url=final_url,
-                            series=series_name,
+                            None, url=alt["url"], series=series_name,
                             chapter_label=f"c{num}" if num else (item.get("label") or ""),
-                            title=result.title or "Untitled",
-                            text=result.text, method=result.method,
-                            group=item.get("group"),
-                            nu_link=link,
-                        )
+                            title=alt["title"], text=alt["text"],
+                            method="wuxiaworld", group=item.get("group"),
+                            nu_link=link)
                         done += 1
                         fetched += 1
                         processed_links.add(link)
-                        activity = f"saved {label}"
+                        activity = f"saved {label} via wuxiaworld"
+                        succeeded = True
                     else:
-                        activity = f"{label} extraction failed"
-                        errors.append(f"backfill {slug}: extraction failed {link}")
+                        final_url = resolve(link)
+                        doc = firestore_store.get_chapter(
+                            series_name, final_url)
+                        if doc is not None:
+                            done += 1
+                            processed_links.add(link)
+                            activity = f"{label} already archived"
+                            # Lazy heal — docs archived before group/nuLink
+                            # existed get patched as the queue walks past
+                            # them; no migration.
+                            if (item.get("group") and not doc.get("group")) \
+                                    or not doc.get("nuLink"):
+                                try:
+                                    firestore_store.patch_chapter_fields(
+                                        series_name, final_url,
+                                        group=item.get("group")
+                                        if not doc.get("group") else None,
+                                        nu_link=link
+                                        if not doc.get("nuLink") else None)
+                                    activity = f"{label} healed (group/nuLink)"
+                                except Exception as e:
+                                    logger.debug(
+                                        f"heal patch failed for {final_url}: {e}")
+                            succeeded = True
+                        else:
+                            result = extract_chapter(final_url, page=_page)
+                            if result.passed_quality_check:
+                                save_chapter(
+                                    None, url=final_url,
+                                    series=series_name,
+                                    chapter_label=f"c{num}" if num else (item.get("label") or ""),
+                                    title=result.title or "Untitled",
+                                    text=result.text, method=result.method,
+                                    group=item.get("group"),
+                                    nu_link=link,
+                                )
+                                done += 1
+                                fetched += 1
+                                processed_links.add(link)
+                                activity = f"saved {label}"
+                                succeeded = True
+                            else:
+                                activity = f"{label} extraction failed"
+                                errors.append(f"backfill {slug}: extraction failed {link}")
             except Exception as e:
                 cf_blocked = "cloudflare" in str(e).lower()
                 activity = f"{label} error: {str(e)[:80]}"
                 errors.append(f"backfill {slug}: {e}")
-                failed = True
             else:
                 cf_blocked = False
-                failed = not (doc is not None or result.passed_quality_check)
-            if failed:
-                # Before burning an attempt (or requeuing on a CF wall),
-                # try the same chapter on wuxiaworld.eu — no Cloudflare,
-                # and its release numbering often still lines up via a
-                # short index search. Covers "any other reason" too:
-                # dead hosts and missing overrides both land here.
-                alt = wuxiaworld.fetch_chapter(
-                    series_name, item.get("num"), wx_cache)
-                if alt:
-                    save_chapter(
-                        None, url=alt["url"], series=series_name,
-                        chapter_label=f"c{num}" if num else (item.get("label") or ""),
-                        title=alt["title"], text=alt["text"],
-                        method="wuxiaworld", group=item.get("group"),
-                        nu_link=link)
-                    done += 1
-                    fetched += 1
-                    processed_links.add(link)
-                    activity = f"saved {label} via wuxiaworld"
-                    failed = False
-                    cf_blocked = False
+            failed = not succeeded
             if cf_blocked:
                 cf_streak += 1
             else:

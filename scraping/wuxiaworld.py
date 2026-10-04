@@ -132,6 +132,8 @@ def fetch_chapter(series_name: str, num, cache: dict):
     to run per failed drain item."""
     if num is None:
         return None
+    if isinstance(num, float) and not num.is_integer():
+        return None  # fractional chapters (c72.5) can't map to wuxiaworld ints
     try:
         num = int(num)
     except (TypeError, ValueError):
