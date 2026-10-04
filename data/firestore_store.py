@@ -249,11 +249,13 @@ def mark_seen(conn, guid: str, link: str):
         raise DatabaseError(f"Failed to mark entry: {e}") from e
 
 
-def mark_failed(conn, guid: str, link: str, error: str = ""):
+def mark_failed(conn, guid: str, link: str, error: str = "") -> int:
     """Record a failed processing attempt. Unlike mark_seen, the entry
     stays retryable until attempts reaches MAX_ATTEMPTS — protects
     against dropping chapters during transient outages (e.g. a
-    Cloudflare-challenged redirect that clears later)."""
+    Cloudflare-challenged redirect that clears later). Returns the new
+    attempt count; callers compare it to MAX_ATTEMPTS to spot an entry
+    that just died for good."""
     try:
         if not guid:
             raise ValidationError("GUID cannot be empty")
@@ -275,6 +277,7 @@ def mark_failed(conn, guid: str, link: str, error: str = ""):
         if not resp.ok:
             raise DatabaseError(f"Firestore write failed {resp.status_code}: {resp.text[:200]}")
         logger.info(f"Recorded failed attempt {attempts + 1} for entry {guid}")
+        return attempts + 1
     except ValidationError:
         raise
     except DatabaseError:
@@ -653,6 +656,54 @@ def update_request(slug: str, fields: dict):
     if not resp.ok:
         raise DatabaseError(
             f"Firestore request write failed {resp.status_code}: {resp.text[:200]}")
+
+
+def enqueue_backfill(series_name: str, series_url: str, reason: str = "") -> bool:
+    """Queue a series backfill on behalf of a permanently dead RSS entry —
+    NU's release table often lists the same chapter from another group on
+    a live host, so a dead aggregator link doesn't have to mean a lost
+    chapter.
+
+    Never touches an active request: a pending/processing doc keeps its
+    progress ledger and the dead entry simply rides along. A finished or
+    errored one gets a *fresh* series-page scan from page 1 — the table
+    is newest-first, so resuming from a stale scrapePage cursor could
+    skip the very releases we're hunting. processedLinks survives so
+    the re-scan doesn't requeue chapters that are already archived.
+    Returns True when a request was (re)queued."""
+    if not series_url:
+        return False
+    slug = _slugify(series_name)
+    resp = _req("GET", f"{REQUESTS_COL}/{slug}")
+    if resp.ok:
+        existing = {k: _from_field(v)
+                    for k, v in resp.json().get("fields", {}).items()}
+        if existing.get("status") in ("pending", "processing"):
+            logger.info(
+                f"Backfill already active for {slug} — dead entry rides along")
+            return False
+    elif resp.status_code != 404:
+        raise DatabaseError(
+            f"Firestore request read failed {resp.status_code}: {resp.text[:200]}")
+    update_request(slug, {
+        "slug": slug,
+        "series": series_name,
+        "url": series_url,
+        "status": "pending",
+        "requestedBy": "auto:dead-rss",
+        "autoReason": (reason or "")[:300],
+        "requestedAt": _iso_now(),
+        "queue": [],
+        "processedCount": 0,
+        "totalCount": 0,
+        "error": "",
+        "autoRetries": 0,
+        "scrapePage": "",
+        "pendingChapters": [],
+        "pendingSynopsis": "",
+    })
+    logger.info(f"Auto-queued backfill for {slug} ({(reason or '')[:120]})")
+    return True
 
 
 def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: float = 0.0, run_url: str = None, phase: str = ""):

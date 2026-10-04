@@ -21,6 +21,7 @@ Optional:
 
 import logging
 import os
+import re
 import sys
 import time
 
@@ -47,6 +48,7 @@ def main() -> int:
     from data import firestore_store
     from rss.rss_watcher import init_db, poll_once
     from main import handle_new_entry
+    from core.utils import clean_series_name, novelupdates_series_url
 
     stats = {"processed": 0, "errors": []}
 
@@ -63,6 +65,31 @@ def main() -> int:
         else:
             stats["processed"] += 1
         return ok
+
+    def on_dead_entry(entry):
+        """RSS entry exhausted its retries — queue a series backfill so
+        the drain retries the chapter via NU's release table, where a
+        different group's live host may serve the same chapter. A dead
+        aggregator link doesn't have to mean a lost chapter."""
+        try:
+            series_name = clean_series_name(
+                getattr(entry, "title", "") or "")
+            summary = getattr(entry, "summary", "") or ""
+            m = re.search(
+                r"https?://www\.novelupdates\.com/series/[^/\s]+/?",
+                summary)
+            series_url = (m.group(0).rstrip("/") + "/") if m \
+                else novelupdates_series_url(series_name)
+            if not series_url or series_name == "Unknown":
+                return
+            if firestore_store.enqueue_backfill(
+                    series_name, series_url,
+                    reason="RSS entry exhausted retries: "
+                           + str(getattr(entry, "title", "?"))):
+                stats["errors"].append(
+                    f"auto-backfill queued: {series_name} (dead RSS entry)")
+        except Exception as e:
+            logger.warning(f"dead-entry backfill enqueue failed: {e}")
 
     started = time.time()
     status = "ok"
@@ -99,7 +126,8 @@ def main() -> int:
         run_deadline = started + int(os.getenv("POLL_RUN_BUDGET_S", "1260"))
         report_phase("polling RSS")
         rss_deadline = started + int(os.getenv("RSS_TIME_BUDGET_S", "300"))
-        poll_once(conn, on_new_entry, deadline=rss_deadline)
+        poll_once(conn, on_new_entry, deadline=rss_deadline,
+                  on_dead_entry=on_dead_entry)
         report_phase("draining backfill queue")
         drain_budget = int(os.getenv("DRAIN_TIME_BUDGET_S", "1200"))
         deadline = min(run_deadline, time.time() + drain_budget)

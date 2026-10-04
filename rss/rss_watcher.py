@@ -117,7 +117,8 @@ def mark_seen(conn, guid: str, link: str):
 def mark_failed(conn, guid: str, link: str, error: str = ""):
     """Record a failed processing attempt — firestore mode retries the
     entry until attempts hit MAX_ATTEMPTS; other backends leave it
-    unseen so the next poll retries anyway."""
+    unseen so the next poll retries anyway. Returns the new attempt
+    count in firestore mode, None otherwise."""
     try:
         db_manager = get_database_manager()
         if db_manager.db_type == "firestore":
@@ -126,6 +127,16 @@ def mark_failed(conn, guid: str, link: str, error: str = ""):
         logger.info(f"Entry {guid} failed; left unmarked for retry")
     except Exception as e:
         logger.error(f"Failed to record entry failure {guid}: {e}")
+    return None
+
+
+def _dead_attempts() -> int:
+    """Retry cap after which an RSS entry counts as seen (firestore mode)."""
+    try:
+        from data import firestore_store
+        return firestore_store.MAX_ATTEMPTS
+    except Exception:
+        return 3
 
 
 def fetch_authenticated_feed(url: str) -> str:
@@ -337,13 +348,17 @@ def load_xml_exports(on_new_entry):
     logger.info(f"Processed {processed_count} entries from XML exports")
 
 
-def poll_once(conn, on_new_entry, deadline=None):
+def poll_once(conn, on_new_entry, deadline=None, on_dead_entry=None):
     """Perform a single polling iteration of the RSS feed.
 
     `deadline` (epoch seconds) bounds how long new-entry processing may
     run — checked between entries, so the expensive resolve+extract path
     can't starve the backfill drain that runs after it in the same job.
-    Entries not reached stay "new" and are picked up next run."""
+    Entries not reached stay "new" and are picked up next run.
+
+    `on_dead_entry(entry)` fires when an entry's retry budget just ran
+    out — it will be treated as seen from now on, so this is the last
+    chance to hand the series to the backfill queue for recovery."""
     try:
         config = _get_config()
         logger.info(f"Polling RSS feed: {config.RSS_FEED_URL}")
@@ -386,7 +401,15 @@ def poll_once(conn, on_new_entry, deadline=None):
                         mark_seen(conn, guid, entry.link)
                         processed_count += 1
                     except Exception as e:
-                        mark_failed(conn, guid, entry.link, str(e))
+                        att = mark_failed(conn, guid, entry.link, str(e))
+                        if att is not None and att >= _dead_attempts() \
+                                and on_dead_entry is not None:
+                            try:
+                                on_dead_entry(entry)
+                            except Exception as e2:
+                                logger.warning(
+                                    f"dead-entry callback failed for "
+                                    f"{guid}: {e2}")
                         raise
             except Exception as e:
                 logger.error(f"Error processing entry: {e}")

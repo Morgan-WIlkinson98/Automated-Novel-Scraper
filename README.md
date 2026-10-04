@@ -409,6 +409,16 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   runs — bounded by an `autoRetries` counter (<2) so genuinely broken
   series URLs stay terminal. Status flows
   `pending → processing → done|error` and the site displays it live.
+- `novels_requests` docs are also created automatically: an RSS entry
+  whose pipeline retries exhaust `novels_seen.attempts` (3) counts as
+  seen forever — before it's dropped, `enqueue_backfill` (re)queues a
+  backfill for its series so the drain retries the chapter via NU's
+  release table, where a different group's live host may serve the same
+  chapter (a dead aggregator link doesn't have to mean a lost chapter).
+  Auto-requests carry `requestedBy: "auto:dead-rss"` + an `autoReason`
+  line; they never disturb an active request's progress ledger, and a
+  finished one gets a fresh page-1 scan with `processedLinks` preserved
+  so already-archived chapters aren't refought.
 
 ### Migrating existing data
 
