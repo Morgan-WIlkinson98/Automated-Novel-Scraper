@@ -80,7 +80,7 @@ def main() -> int:
                 summary)
             series_url = (m.group(0).rstrip("/") + "/") if m \
                 else novelupdates_series_url(series_name)
-            if not series_url:
+            if not series_url or series_name == "Unknown":
                 return
             if firestore_store.enqueue_backfill(
                     series_name, series_url,
