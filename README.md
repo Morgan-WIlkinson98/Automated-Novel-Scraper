@@ -392,7 +392,21 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   failures instead: they re-queue *without* consuming an attempt, pause
   20s to let the rate-limit decay, and after 4 consecutive blocks the
   drain bails entirely until the next run rather than keeping the IP
-  flagged. Every request gets
+  flagged. Backfill items fetch from **wuxiaworld.eu first** — its
+  anonymous JSON API (`/api/novels/?search` → slug, `/api/getchapter/
+  {slug}-{idx}/` → `{title, text}`) has no Cloudflare challenge and is
+  far more forgiving for bulk work; the NU-linked resolve+extract path
+  only runs when wuxiaworld doesn't carry the chapter (a short index
+  search maps NU's `cN` numbering onto wuxiaworld's position index —
+  offsets come from prologue/extra rows, and a title-parse verifies the
+  real number so a miss never guesses wrong). Dedup happens before any
+  fetch: `get_chapter_by_nulink` matches the queue item's extnu link
+  against the `nuLink` stamped on every archived chapter regardless of
+  source, so no resolve is needed just to skip already-saved work.
+  Rescued chapters save with `method: "wuxiaworld"` and the wuxiaworld
+  page URL; stub novels with no hosted chapters dead-mark for the rest
+  of the run.
+  Every request gets
   a bounded slice per run (FIFO by `requestedAt`, max 40 new chapters
   total, `DRAIN_ITEMS_PER_REQUEST`=40 items attempted per request, and a
   fair-share time slice — remaining budget ÷ remaining requests — so one

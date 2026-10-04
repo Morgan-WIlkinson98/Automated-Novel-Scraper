@@ -626,6 +626,36 @@ def bulk_upsert(docs):
     return written
 
 
+def get_chapter_by_nulink(series: str, nu_link: str):
+    """Any archived chapter saved via this NU release link — regardless
+    of which source's text it holds (RSS pipeline, earlier backfills,
+    and wuxiaworld saves all stamp nuLink). Dedups queue items without
+    an extnu resolve. Docs old enough to lack nuLink miss this check —
+    the final-URL lookup still catches those. Returns doc fields or
+    None."""
+    if not nu_link:
+        return None
+    slug = _slugify(series)
+    resp = _req("POST", f"{SERIES_COL}/{slug}:runQuery", json={
+        "structuredQuery": {
+            "from": [{"collectionId": "chapters"}],
+            "where": {"fieldFilter": {
+                "field": {"fieldPath": "nuLink"},
+                "op": "EQUAL",
+                "value": {"stringValue": nu_link},
+            }},
+            "limit": 1,
+        }})
+    if not resp.ok:
+        raise DatabaseError(
+            f"Firestore chapter query failed {resp.status_code}: {resp.text[:200]}")
+    for row in resp.json() or []:
+        doc = row.get("document")
+        if doc:
+            return {k: _from_field(v) for k, v in doc.get("fields", {}).items()}
+    return None
+
+
 REQUESTS_COL = "novels_requests"
 
 
