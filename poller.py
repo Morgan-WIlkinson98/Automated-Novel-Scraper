@@ -178,6 +178,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
     from scraping.series_scraper import scrape_series_page
     from scraping.link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
     from scraping.generic_extractor import extract_chapter
+    from scraping import wuxiaworld
     from data.storage import save_chapter
 
     try:
@@ -290,6 +291,9 @@ def drain_requests(errors: list, max_chapters: int = 40,
 
     fetched = 0
     bail_drain = False
+    # wuxiaworld.eu fallback — slug lookups + misses cached for the run
+    # so a dead series doesn't re-probe its API on every failed item.
+    wx_cache = {}
 
     # Pass 1 — promotions first: queue-building shouldn't starve behind a
     # storming drain (the head request can bail the whole drain on CF
@@ -510,6 +514,27 @@ def drain_requests(errors: list, max_chapters: int = 40,
             else:
                 cf_blocked = False
                 failed = not (doc is not None or result.passed_quality_check)
+            if failed:
+                # Before burning an attempt (or requeuing on a CF wall),
+                # try the same chapter on wuxiaworld.eu — no Cloudflare,
+                # and its release numbering often still lines up via a
+                # short index search. Covers "any other reason" too:
+                # dead hosts and missing overrides both land here.
+                alt = wuxiaworld.fetch_chapter(
+                    series_name, item.get("num"), wx_cache)
+                if alt:
+                    save_chapter(
+                        None, url=alt["url"], series=series_name,
+                        chapter_label=f"c{num}" if num else (item.get("label") or ""),
+                        title=alt["title"], text=alt["text"],
+                        method="wuxiaworld", group=item.get("group"),
+                        nu_link=link)
+                    done += 1
+                    fetched += 1
+                    processed_links.add(link)
+                    activity = f"saved {label} via wuxiaworld"
+                    failed = False
+                    cf_blocked = False
             if cf_blocked:
                 cf_streak += 1
             else:
