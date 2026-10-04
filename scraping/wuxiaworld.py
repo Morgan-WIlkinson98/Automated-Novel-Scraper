@@ -98,7 +98,11 @@ def _novel_slug(series_name: str, cache: dict):
     slug = None
     guess = _slugify(series_name)
     n = _get(f"/novels/{guess}/")
-    if n and (n.get("numOfChaps") or n.get("first_chapter")):
+    # The slug alone isn't proof — a different novel can own it. Verify
+    # the name (or an alias) actually matches, and that chapters are
+    # hosted (numOfChaps lies on stubs; first_chapter doesn't).
+    if n and (n.get("numOfChaps") or n.get("first_chapter")) \
+            and _name_match(n, series_name):
         slug = guess
     else:
         res = _get("/novels/", params={"search": series_name, "limit": 6})
@@ -112,7 +116,15 @@ def _novel_slug(series_name: str, cache: dict):
 
 def _title_num(title: str):
     """Real chapter number out of a wuxiaworld title — same patterns the
-    NU release-table parser uses ("Chapter 246", "CH 23", bare digits)."""
+    NU release-table parser uses ("Chapter 246", "CH 23", bare digits).
+    Volume-style titles ("v2c10") are rejected unless an explicit
+    'chapter N' phrase exists — per-volume numbering can't map onto
+    NU's continuous count, and a false match is worse than a miss."""
+    if not title:
+        return None
+    if re.search(r"v\d+", title, re.I):
+        m = re.search(r"chapter\s*#?\s*(\d+)", title, re.I)
+        return int(m.group(1)) if m else None
     from scraping.series_scraper import _guess_chapter_number
     return _guess_chapter_number(title)
 
