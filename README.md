@@ -46,7 +46,7 @@ For detailed documentation, see:
 - **[Deployment Guide](docs/deployment.md)** - Deployment instructions for various environments
 - **[API Documentation](docs/api.md)** - Complete API reference for all modules
 - **[Contributing](CONTRIBUTING.md)** - Contribution guidelines and coding standards
-- **[Project Guide](docs/project-guide.md)** - End-to-end overview, installation, packaged desktop releases, and workflow
+- **[Project Guide](docs/project-guide.md)** - End-to-end overview, installation, and workflow
 
 ## Installation
 
@@ -442,7 +442,7 @@ python tools/import_sqlite.py --dry-run          # count what would migrate
 python tools/import_sqlite.py                    # write it to Firestore
 ```
 
-Local/desktop mode is unchanged — `DB_TYPE` still defaults to `sqlite`
+Local mode is unchanged — `DB_TYPE` still defaults to `sqlite`
 and `main.py`/`web_ui.py` work exactly as before.
 
 ## Database Schema

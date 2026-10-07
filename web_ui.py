@@ -31,8 +31,7 @@ from rss.rss_watcher import init_db as init_seen_db, poll_once
 
 logger = logging.getLogger(__name__)
 
-# PyInstaller sets sys._MEIPASS when running from a bundle.
-BASE_DIR = Path(getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__))))
+BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 app = Flask(__name__, template_folder=str(BASE_DIR / 'templates'))
 app.secret_key = 'novel-scraper-secret-key-change-in-production'
