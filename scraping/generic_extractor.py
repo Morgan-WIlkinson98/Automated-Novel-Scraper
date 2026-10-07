@@ -19,9 +19,9 @@ from core.exceptions import ExtractionError, QualityError, ValidationError
 def _fetch_rendered_html(url: str, page=None) -> Optional[str]:
     """Use Playwright to render JS-heavy pages as a last resort.
 
-    `page` lets a caller inside a long-lived Playwright session (the
-    backfill drain) reuse it — sync_playwright() can't start again while
-    another instance is already running on this thread."""
+    `page` lets a caller inside a long-lived Playwright session (request
+    queue processing) reuse it — sync_playwright() can't start again
+    while another instance is already running on this thread."""
     try:
         if page is not None:
             page.goto(url, wait_until="domcontentloaded", timeout=60000)

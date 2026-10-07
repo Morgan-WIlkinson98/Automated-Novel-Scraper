@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       slug:
-        description: "Optional: drain only this novels_requests slug (skips RSS)"
+        description: "Optional: process only this novels_requests slug (skips RSS)"
         required: false
         type: string
 

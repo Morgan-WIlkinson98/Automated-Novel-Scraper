@@ -353,7 +353,8 @@ def poll_once(conn, on_new_entry, deadline=None, on_dead_entry=None):
 
     `deadline` (epoch seconds) bounds how long new-entry processing may
     run — checked between entries, so the expensive resolve+extract path
-    can't starve the backfill drain that runs after it in the same job.
+    can't starve the request-queue processing that runs after it in the
+    same job.
     Entries not reached stay "new" and are picked up next run.
 
     `on_dead_entry(entry)` fires when an entry's retry budget just ran

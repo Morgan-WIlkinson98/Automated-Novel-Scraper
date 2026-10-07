@@ -341,7 +341,7 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   data can be healed later without re-resolving redirects. Group data is
   self-healing rather than migrated: every series sync (runs on each new
   RSS release) patches archived chapters whose `nuLink` is known but
-  `group` is empty, and the backfill drain patches missing `group`/
+  `group` is empty, and the request-queue pass patches missing `group`/
   `nuLink` on already-archived docs as the queue walks past them. Once a
   full scan finds nothing left to heal, the series doc's `groupsHealed`
   flag is set and later syncs skip the walk; any chapter saved or
@@ -352,31 +352,33 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
 - `novels_seen/{sha256(guid)}` — RSS dedup (replaces `seen_entries.db`)
 - `novels_meta/state` — run status for the site dashboard: a `running`
   heartbeat (+ Actions run-log URL) is written at run start, `phase`
-  markers update at each stage (polling RSS → draining backfill), then
+  markers update at each stage (polling RSS → processing request queue),
+  then
   the final `ok`/`failed` status at run end. Request docs also carry an
   `activity` line ("saved c45", "c46 already archived") refreshed on each
   progress flush so the site can narrate per-item work.
 - `novels_requests/{slug}` — backfill queue written by the site's
   Access-gated Pages Function ("Fetch missing chapters"). Each poll run
-  drains it in two passes: pass 1 promotes `pending`/retryable-`error`
+  processes it in two passes: pass 1 promotes `pending`/retryable-`error`
   requests first — `scrape_series_page` enumerates the full NU chapter
   table (challenge-aware first-page wait, `#myTable` row waits per page,
   and a `stop_at` bound — a truncated scrape persists a `scrapePage`
   cursor + `pendingChapters` on the request so the next run resumes
   mid-table instead of restarting; pauses don't burn auto-retries) — and
   **discovered chapters fold straight into the live `queue`** rather
-  than waiting for the full table, so a series keeps draining the pages
-  it already found while pagination resumes across runs (`processedLinks`
-  records drained extnu links so resumed scrapes never requeue them;
-  `totalCount` = done + still-queued, growing as discovery continues).
+  than waiting for the full table, so a series keeps processing the
+  chapters it already found while pagination resumes across runs
+  (`processedLinks` records handled extnu links so resumed scrapes never
+  requeue them; `totalCount` = done + still-queued, growing as discovery
+  continues).
   A Cloudflare wall on a *resumed* scrape is treated as a pause, not an
-  error — no autoRetries burned, queue keeps draining — so
+  error — no autoRetries burned, queue keeps processing — so
   queue-building can never
   starve behind a request that's eating CF blocks; pass 2 then resolves +
   extracts missing chapters (already-archived
   chapters skip extraction via a `get_chapter` check, which also lets the
-  drain lazy-heal missing `group`/`nuLink` on old docs). All extnu
-  resolves in a drain ride one shared headed-browser session — the first
+  queue walk lazy-heal missing `group`/`nuLink` on old docs). All extnu
+  resolves ride one shared headed-browser session — the first
   navigation solves NU's Cloudflare challenge and the clearance cookie
   covers the rest (~1-2s per resolve vs ~9s per fresh browser, and no
   repeated challenge rolls to trip CF's rate limit); a crashed session
@@ -390,35 +392,46 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
   re-queue for the next run — up to 3 attempts, then dropped.
   Cloudflare-blocked resolves are treated as transient infrastructure
   failures instead: they re-queue *without* consuming an attempt, pause
-  20s to let the rate-limit decay, and after 4 consecutive blocks the
-  drain bails entirely until the next run rather than keeping the IP
-  flagged. Backfill items fetch from **wuxiaworld.eu first** — its
-  anonymous JSON API (`/api/novels/?search` → slug, `/api/getchapter/
-  {slug}-{idx}/` → `{title, text}`) has no Cloudflare challenge and is
-  far more forgiving for bulk work; the NU-linked resolve+extract path
-  only runs when wuxiaworld doesn't carry the chapter (a short index
-  search maps NU's `cN` numbering onto wuxiaworld's position index —
-  offsets come from prologue/extra rows, and a title-parse verifies the
-  real number so a miss never guesses wrong). Dedup happens before any
-  fetch: `get_chapter_by_nulink` matches the queue item's extnu link
-  against the `nuLink` stamped on every archived chapter regardless of
-  source, so no resolve is needed just to skip already-saved work.
-  Rescued chapters save with `method: "wuxiaworld"` and the wuxiaworld
-  page URL; stub novels with no hosted chapters dead-mark for the rest
-  of the run.
+  20s to let the rate-limit decay, and after 4 consecutive blocks only
+  that request's slice is skipped — queue processing for other requests
+  continues; the whole pass pauses for the next run only when
+  consecutive requests all storm (then the runner IP itself is
+  flagged).
+
+  Chapter text comes from an ordered mirror chain
+  (`scraping/alt_sources.py`), tried before the NU-linked host:
+  **wuxiaworld.eu** (Next.js page scrape — `__NEXT_DATA__` props carry
+  authoritative `chapter.number`/`paragraphs`; a bounded index search
+  maps NU's `cN` numbering onto the site's position index), then
+  **novelfull.net** (classic `/{slug}/chapter-{n}.html` layout;
+  Cloudflare-walled for plain requests so it borrows the shared browser
+  session), then **novellunar.com** (`/novel/{slug}/chapter/{num}`;
+  prose rides inside the Next.js RSC stream rather than the DOM). Each
+  source resolves the NU series name to its own slug — direct guess
+  first, site search second, title verification always — and only a
+  verified chapter-number match counts as a hit, so a source that
+  doesn't host the novel (or only mirrors NU metadata as a
+  chapterless stub) misses cleanly and the chain moves on; the
+  NU-linked resolve+extract path is the final fallback. Dedup happens
+  before any fetch: `get_chapter_by_nulink` matches the queue item's
+  extnu link against the `nuLink` stamped on every archived chapter
+  regardless of source, so no resolve is needed just to skip
+  already-saved work. Rescued chapters save with `method` set to the
+  mirror name and the mirror page URL.
   Every request gets
   a bounded slice per run (FIFO by `requestedAt`, max 40 new chapters
-  total, `DRAIN_ITEMS_PER_REQUEST`=40 items attempted per request, and a
+  total, `QUEUE_ITEMS_PER_REQUEST`=40 items attempted per request, and a
   fair-share time slice — remaining budget ÷ remaining requests — so one
   slow request can't starve the ones queued behind it),
-  progress is flushed to Firestore every 60s, and the whole drain is
-  time-boxed by `DRAIN_TIME_BUDGET_S` (default 1200s) so the 25-min job
+  progress is flushed to Firestore every 60s, and queue processing is
+  time-boxed by `QUEUE_TIME_BUDGET_S` (default 1200s; the legacy
+  `DRAIN_*` names are still read) so the 25-min job
   timeout can't kill a run before progress is persisted. The run splits
   its time: RSS entry processing is capped by `RSS_TIME_BUDGET_S`
   (default 300s — entries it doesn't reach stay "new" for the next run)
-  and the drain runs under `POLL_RUN_BUDGET_S` (default 1260s, the
-  whole-run cap measured from start), so RSS can never starve the
-  backfill queue. Requests that died on transient infrastructure errors
+  and queue processing runs under `POLL_RUN_BUDGET_S` (default 1260s,
+  the whole-run cap measured from start), so RSS can never starve the
+  request queue. Requests that died on transient infrastructure errors
   (Cloudflare walls, timeouts, playwright crashes) auto-retry on later
   runs — bounded by an `autoRetries` counter (<2) so genuinely broken
   series URLs stay terminal. Status flows
@@ -426,8 +439,9 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
 - `novels_requests` docs are also created automatically: an RSS entry
   whose pipeline retries exhaust `novels_seen.attempts` (3) counts as
   seen forever — before it's dropped, `enqueue_backfill` (re)queues a
-  backfill for its series so the drain retries the chapter via NU's
-  release table, where a different group's live host may serve the same
+  backfill for its series so the request queue retries the chapter via
+  NU's release table, where a different group's live host may serve the
+  same
   chapter (a dead aggregator link doesn't have to mean a lost chapter).
   Auto-requests carry `requestedBy: "auto:dead-rss"` + an `autoReason`
   line; they never disturb an active request's progress ledger, and a

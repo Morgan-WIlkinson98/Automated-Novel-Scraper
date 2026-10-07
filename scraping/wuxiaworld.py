@@ -111,7 +111,7 @@ def _novel(slug: str):
 
 
 def _novel_slug(series_name: str, cache: dict):
-    """series_name → wuxiaworld slug (or None), cached per drain run.
+    """series_name → wuxiaworld slug (or None), cached per run.
     A novel must actually host chapters — stubs with chapterCount=0
     (like NU-mirror entries) are dead ends."""
     if series_name in cache:
@@ -156,12 +156,14 @@ def _clean_paragraphs(paragraphs) -> str:
     return "\n\n".join(lines).strip()
 
 
-def fetch_chapter(series_name: str, num, cache: dict):
+def fetch_chapter(series_name: str, num, cache: dict, page=None):
     """Best-effort (series, NU chapter num) → wuxiaworld chapter.
 
     Returns dict(title, text, url, source_slug) on a verified number
     match, else None. Probes ≤_MAX_PROBES pages — cheap enough to run
-    per failed drain item."""
+    per failed queue item. `page` is unused (plain HTTP suffices) but
+    accepted for signature parity with the other mirror sources."""
+    del page
     if num is None:
         return None
     if isinstance(num, float) and not num.is_integer():
