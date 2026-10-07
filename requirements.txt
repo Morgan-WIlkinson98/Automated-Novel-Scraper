@@ -7,5 +7,5 @@ lxml
 ebooklib
 flask
 playwright
-pywebview
+
 psycopg2-binary

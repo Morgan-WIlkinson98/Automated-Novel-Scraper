@@ -47,12 +47,6 @@ docs
 *.md
 !README.md
 
-# Desktop app files (not needed in container)
-BookIcon.icns
-BookIcon.ico
-BookIcon.jpg
-desktop_app.py
-
 # Config (should be mounted as volume)
 config.py
 

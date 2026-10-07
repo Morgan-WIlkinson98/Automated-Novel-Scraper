@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "novel-scraper"
 version = "0.1.0"
-description = "NovelUpdates scraper with Flask web UI and optional desktop GUI"
+description = "NovelUpdates scraper with Flask web UI"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -18,16 +18,14 @@ dependencies = [
     "ebooklib",
     "flask",
     "playwright",
-    "pywebview",
 ]
 
 [project.scripts]
 novel-scraper = "main:main"
 novel-scraper-web = "web_ui:main"
-novel-scraper-gui = "desktop_app:main"
 
 [tool.setuptools]
-py-modules = ["desktop_app", "main", "start", "web_ui"]
+py-modules = ["main", "start", "web_ui"]
 
 [tool.setuptools.packages.find]
 where = ["."]
