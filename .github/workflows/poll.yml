@@ -5,6 +5,11 @@ on:
     # Every 30 min on off-peak minutes
     - cron: '7,37 * * * *'
   workflow_dispatch:
+    inputs:
+      slug:
+        description: "Optional: drain only this novels_requests slug (skips RSS)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -49,4 +54,5 @@ jobs:
           # Headless Chromium never clears NU's Cloudflare challenge;
           # run headed under a virtual display.
           NU_HEADED: '1'
+          POLL_ONLY_SLUG: ${{ inputs.slug }}
         run: xvfb-run -a python3 poller.py
