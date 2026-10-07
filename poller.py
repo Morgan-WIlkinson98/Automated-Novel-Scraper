@@ -68,9 +68,9 @@ def main() -> int:
 
     def on_dead_entry(entry):
         """RSS entry exhausted its retries — queue a series backfill so
-        the drain retries the chapter via NU's release table, where a
-        different group's live host may serve the same chapter. A dead
-        aggregator link doesn't have to mean a lost chapter."""
+        the request queue retries the chapter via NU's release table,
+        where a different group's live host may serve the same chapter.
+        A dead aggregator link doesn't have to mean a lost chapter."""
         try:
             series_name = clean_series_name(
                 getattr(entry, "title", "") or "")
@@ -118,20 +118,28 @@ def main() -> int:
         # long-running (or dying) jobs were invisible.
         report_phase("starting")
         # Budget split — a busy RSS phase previously consumed the whole
-        # window and left the drain deadline already expired (its deadline
+        # window and left the queue deadline already expired (its deadline
         # was measured from run start). Now RSS gets up to
-        # RSS_TIME_BUDGET_S, and the drain gets whatever is left under
-        # POLL_RUN_BUDGET_S — a hard cap that leaves headroom under the
-        # job's 25-min timeout for the run-meta write and teardown.
+        # RSS_TIME_BUDGET_S, and queue processing gets whatever is left
+        # under POLL_RUN_BUDGET_S — a hard cap that leaves headroom under
+        # the job's 25-min timeout for the run-meta write and teardown.
         run_deadline = started + int(os.getenv("POLL_RUN_BUDGET_S", "1260"))
-        report_phase("polling RSS")
-        rss_deadline = started + int(os.getenv("RSS_TIME_BUDGET_S", "300"))
-        poll_once(conn, on_new_entry, deadline=rss_deadline,
-                  on_dead_entry=on_dead_entry)
-        report_phase("draining backfill queue")
-        drain_budget = int(os.getenv("DRAIN_TIME_BUDGET_S", "1200"))
-        deadline = min(run_deadline, time.time() + drain_budget)
-        stats["processed"] += drain_requests(stats["errors"], deadline=deadline)
+        # Focused mode (workflow_dispatch `slug` input): skip RSS and
+        # spend the whole run on one request's queue — used to verify a
+        # single series end-to-end without queueing behind the rest.
+        only_slug = (os.getenv("POLL_ONLY_SLUG") or "").strip() or None
+        if not only_slug:
+            report_phase("polling RSS")
+            rss_deadline = started + int(os.getenv("RSS_TIME_BUDGET_S", "300"))
+            poll_once(conn, on_new_entry, deadline=rss_deadline,
+                      on_dead_entry=on_dead_entry)
+        report_phase("processing request queue")
+        queue_budget = int(os.getenv(
+            "QUEUE_TIME_BUDGET_S",
+            os.getenv("DRAIN_TIME_BUDGET_S", "1200")))
+        deadline = min(run_deadline, time.time() + queue_budget)
+        stats["processed"] += process_request_queue(
+            stats["errors"], deadline=deadline, only_slug=only_slug)
     except Exception as e:
         status = "failed"
         stats["errors"].append(str(e))
@@ -154,17 +162,20 @@ def main() -> int:
     return 0 if status == "ok" else 1
 
 
-# Per-request slice cap and progress-flush cadence for the drain loop.
+# Per-request slice cap and progress-flush cadence for the queue loop.
 # The fetched-count cap alone can't bound a run: queue items that resolve
 # to already-archived chapters (or fail) don't count against it, so a run
 # could grind through hundreds of ~9s browser resolves until the job's
 # 25-min timeout kills it mid-loop — and unflushed progress is lost.
-_DRAIN_ITEM_CAP = int(os.getenv("DRAIN_ITEMS_PER_REQUEST", "40"))
-_DRAIN_FLUSH_S = 60
+_QUEUE_ITEM_CAP = int(os.getenv(
+    "QUEUE_ITEMS_PER_REQUEST",
+    os.getenv("DRAIN_ITEMS_PER_REQUEST", "40")))
+_QUEUE_FLUSH_S = 60
 
 
-def drain_requests(errors: list, max_chapters: int = 40,
-                   deadline: float = None) -> int:
+def process_request_queue(errors: list, max_chapters: int = 40,
+                          deadline: float = None,
+                          only_slug: str = None) -> int:
     """Process queued full-series requests from the site (novels_requests
     docs written by the Pages Function). Each request carries the series
     URL + a queue of extnu chapter links; we resolve+extract a bounded
@@ -173,12 +184,21 @@ def drain_requests(errors: list, max_chapters: int = 40,
     Every request gets a slice per run (FIFO by requestedAt) so a deep
     queue can't starve the ones behind it, and progress is flushed to
     Firestore periodically — a cancelled run loses at most the last flush
-    window instead of the whole run's work. Returns chapters fetched."""
+    window instead of the whole run's work. Returns chapters fetched.
+
+    Chapter sources, tried in order: wuxiaworld.eu → novelfull.net →
+    novellunar.com → the chapter link from NovelUpdates (scraping/
+    alt_sources.py). NovelUpdates stays the source of truth for series
+    metadata and release discovery; the mirrors only fill in text.
+
+    only_slug (POLL_ONLY_SLUG): restrict to a single request, include it
+    even in a terminal-error state, and log each item outcome — used by
+    manual dispatch runs to verify one series end-to-end."""
     from data import firestore_store
     from scraping.series_scraper import scrape_series_page
     from scraping.link_resolver import resolve_final_url_with_browser_fallback as resolve_final_url
     from scraping.generic_extractor import extract_chapter
-    from scraping import wuxiaworld
+    from scraping import alt_sources
     from data.storage import save_chapter
 
     try:
@@ -192,17 +212,28 @@ def drain_requests(errors: list, max_chapters: int = 40,
     # nesting crashes, CF walls on the series page, timeouts) get auto-
     # retried — bounded by autoRetries so a genuinely broken series URL
     # doesn't resurrect forever. Anything else stays terminal.
-    _TRANSIENT_ERR = ("asyncio", "cloudflare", "timeout", "timed out",
-                      "connection", "temporar", "rate limit", "playwright",
-                      "truncat")
-    requests_ = [
-        r for r in requests_
-        if r.get("status") != "error"
-        # A paused series scrape is progress, not failure — always retry.
-        or "paused" in str(r.get("error") or "").lower()
-        or (any(t in str(r.get("error") or "").lower() for t in _TRANSIENT_ERR)
-            and int(r.get("autoRetries") or 0) < 3)
-    ]
+    if only_slug:
+        # Focused runs bypass the error-state filter — the point is to
+        # retry one specific request even if it looks terminal.
+        requests_ = [r for r in requests_ if r.get("slug") == only_slug]
+        if not requests_:
+            errors.append(f"focus run: no pending request for {only_slug}")
+            logger.warning(
+                f"POLL_ONLY_SLUG={only_slug}: no matching request")
+            return 0
+    else:
+        _TRANSIENT_ERR = ("asyncio", "cloudflare", "timeout", "timed out",
+                          "connection", "temporar", "rate limit", "playwright",
+                          "truncat")
+        requests_ = [
+            r for r in requests_
+            if r.get("status") != "error"
+            # A paused series scrape is progress, not failure — always retry.
+            or "paused" in str(r.get("error") or "").lower()
+            or (any(t in str(r.get("error") or "").lower()
+                    for t in _TRANSIENT_ERR)
+                and int(r.get("autoRetries") or 0) < 3)
+        ]
     if not requests_:
         return 0
 
@@ -220,9 +251,9 @@ def drain_requests(errors: list, max_chapters: int = 40,
         from scraping.browser import get_browser_page, resolve_in_page
         _browser_cm = get_browser_page()
         _page = _browser_cm.__enter__()
-        logger.info("Shared drain browser session opened")
+        logger.info("Shared queue-processing browser session opened")
     except Exception as e:
-        logger.warning(f"Shared drain browser unavailable, per-item resolve only: {e}")
+        logger.warning(f"Shared browser session unavailable, per-item resolve only: {e}")
 
     def resolve(link):
         nonlocal _browser_cm, _page, _page_rebuilds
@@ -273,7 +304,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
 
     def merge_queue(req, chapters):
         """Fold newly discovered chapters into the request's live queue —
-        keeps undrained items, skips links already queued or processed
+        keeps unprocessed items, skips links already queued or processed
         in earlier runs, and re-sorts oldest-first."""
         queue = list(req.get("queue") or [])
         seen = {i.get("extnu") for i in queue}
@@ -290,14 +321,15 @@ def drain_requests(errors: list, max_chapters: int = 40,
         return queue
 
     fetched = 0
-    bail_drain = False
-    # wuxiaworld.eu fallback — slug lookups + misses cached for the run
-    # so a dead series doesn't re-probe its API on every failed item.
-    wx_cache = {}
+    bail_queue = False
+    stormed_reqs = 0  # consecutive requests that CF-bailed their slice
+    # Mirror-source slug lookups + misses cached for the run so a dead
+    # series doesn't re-probe every site on every failed item.
+    alt_caches = {}
 
     # Pass 1 — promotions first: queue-building shouldn't starve behind a
-    # storming drain (the head request can bail the whole drain on CF
-    # blocks before later requests are even reached). Series-page
+    # storming request (the head request used to bail the whole pass on
+    # CF blocks before later requests were even reached). Series-page
     # navigation may also pass where extnu resolves are walled.
     for req in requests_:
         if out_of_time():
@@ -305,7 +337,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
                         "remaining work to the next run")
             break
         # Fresh promotions AND paused series still carrying a scrapePage
-        # cursor — the latter already have a queue draining beneath the
+        # cursor — the latter already have a queue processing beneath the
         # resume, so they aren't skipped just for being "processing".
         if req.get("status") not in ("pending", "error") \
                 and not req.get("scrapePage"):
@@ -330,13 +362,13 @@ def drain_requests(errors: list, max_chapters: int = 40,
                 # Mid-scrape wall on a *resumed* series — a pause, not a
                 # failure: don't burn autoRetries. Fold whatever the
                 # paused scrape already discovered into the live queue
-                # so the drain still makes progress this run.
+                # so processing still makes progress this run.
                 queue = merge_queue(req, req.get("pendingChapters") or [])
                 status = "processing" if queue else "pending"
                 firestore_store.update_request(slug, {
                     "status": status,
                     "error": "Cloudflare wall on series page — pagination "
-                             "resumes next run; queue keeps draining",
+                             "resumes next run; queue keeps processing",
                     "queue": queue,
                     "totalCount": int(req.get("processedCount") or 0)
                                   + len(queue),
@@ -354,7 +386,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
             # Paused mid-table — persist the resume point + the chapters
             # found so far so a giant series doesn't have to fit inside
             # one run, AND fold the discoveries straight into the live
-            # queue so the drain works them now instead of idling until
+            # queue so processing works them now instead of idling until
             # the table finishes. Not an autoRetries failure: a pause
             # isn't one.
             found = {c.get("extnu_url"): c
@@ -379,7 +411,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
                           f"at pg {info.get('stopped_pg')}")
             continue
         # Complete scrape — fold in chapters carried over from paused
-        # runs, preserving the undrained queue + already-processed links.
+        # runs, preserving the pending queue + already-processed links.
         all_chapters = {c.get("extnu_url"): c
                         for c in (req.get("pendingChapters") or [])
                         if c.get("extnu_url")}
@@ -389,8 +421,8 @@ def drain_requests(errors: list, max_chapters: int = 40,
         synopsis = info.get("synopsis") or req.get("pendingSynopsis") or ""
         # NU's releases table is newest-first — merge_queue re-sorts
         # ascending so a backfill fills from chapter 1 up and early
-        # chapters are readable long before the tail drains. Unnumbered
-        # rows (prologues/side stories) ride at the end.
+        # chapters are readable long before the tail is processed.
+        # Unnumbered rows (prologues/side stories) ride at the end.
         queue = merge_queue(req, chapters_found)
         if synopsis:
             firestore_store.save_series_info(
@@ -416,11 +448,11 @@ def drain_requests(errors: list, max_chapters: int = 40,
         except Exception as e:
             logger.warning(f"group heal skipped for {slug}: {e}")
 
-    # Pass 2 — drain items, only for requests that actually have a queue.
-    drain_reqs = [r for r in requests_ if r.get("queue")]
-    for i, req in enumerate(drain_reqs):
-        if out_of_time() or bail_drain:
-            logger.info("Backfill drain stopping — deferring "
+    # Pass 2 — process queued items, only for requests that have one.
+    queued_reqs = [r for r in requests_ if r.get("queue")]
+    for i, req in enumerate(queued_reqs):
+        if out_of_time() or bail_queue:
+            logger.info("Queue processing stopping — deferring "
                         "remaining requests to the next run")
             break
 
@@ -428,7 +460,7 @@ def drain_requests(errors: list, max_chapters: int = 40,
         series_name = req.get("series") or slug
         queue = req.get("queue") or []
         done = int(req.get("processedCount") or 0)
-        # Extnu links already drained (saved/archived/dropped) — the
+        # Extnu links already processed (saved/archived/dropped) — the
         # series-page resume merges use this to never requeue them.
         processed_links = set(req.get("processedLinks") or [])
 
@@ -441,8 +473,9 @@ def drain_requests(errors: list, max_chapters: int = 40,
         retry_next = []
         attempted = 0
         cf_streak = 0
+        stormed = False
         last_flush = time.time()
-        activity = "drain resumed"
+        activity = "queue processing resumed"
         # Flush immediately so the site's "last worked" reflects this run
         # instead of waiting up to a minute for the first item flush.
         try:
@@ -452,16 +485,16 @@ def drain_requests(errors: list, max_chapters: int = 40,
             pass
         # Fair-share slice — a request whose items are slow (dead
         # sources take ~35s each to resolve-then-fail) could burn the
-        # whole drain window and starve everyone behind it, so each
+        # whole queue window and starve everyone behind it, so each
         # request gets an even share of the budget still on the clock.
-        remaining_reqs = max(1, len(drain_reqs) - i)
+        remaining_reqs = max(1, len(queued_reqs) - i)
         slice_deadline = min(
             deadline if deadline is not None else float("inf"),
             time.time() + max(60.0,
                               (deadline - time.time()) / remaining_reqs)
             if deadline is not None else float("inf"))
         while (remaining and fetched < max_chapters
-               and attempted < _DRAIN_ITEM_CAP and not out_of_time()
+               and attempted < _QUEUE_ITEM_CAP and not out_of_time()
                and time.time() < slice_deadline):
             item = remaining.pop(0)
             attempted += 1
@@ -490,24 +523,28 @@ def drain_requests(errors: list, max_chapters: int = 40,
                             logger.debug(f"heal patch failed for {link}: {e}")
                     succeeded = True
                 else:
-                    # Backfills hit wuxiaworld.eu FIRST — anonymous JSON
-                    # API, no Cloudflare, far more forgiving than
-                    # translator hosts for bulk work. The resolve+extract
-                    # path is now the fallback (RSS items keep it
-                    # primary — they come in with fresh links).
-                    alt = wuxiaworld.fetch_chapter(
-                        series_name, num, wx_cache)
+                    # Backfills walk the mirror chain FIRST —
+                    # wuxiaworld.eu → novelfull.net → novellunar.com —
+                    # before resolving the NU-linked host. Mirrors have
+                    # predictable layouts and (mostly) no Cloudflare, so
+                    # they're far more forgiving than translator hosts
+                    # for bulk work. NU links are the last resort (RSS
+                    # items keep them primary — they arrive with fresh
+                    # links). The shared page is passed for novelfull,
+                    # which sits behind Cloudflare for plain requests.
+                    alt = alt_sources.fetch_chapter(
+                        series_name, num, alt_caches, page=_page)
                     if alt:
                         save_chapter(
                             None, url=alt["url"], series=series_name,
                             chapter_label=f"c{num}" if num else (item.get("label") or ""),
                             title=alt["title"], text=alt["text"],
-                            method="wuxiaworld", group=item.get("group"),
+                            method=alt["source"], group=item.get("group"),
                             nu_link=link)
                         done += 1
                         fetched += 1
                         processed_links.add(link)
-                        activity = f"saved {label} via wuxiaworld"
+                        activity = f"saved {label} via {alt['source']}"
                         succeeded = True
                     else:
                         final_url = resolve(link)
@@ -579,20 +616,25 @@ def drain_requests(errors: list, max_chapters: int = 40,
                         processed_links.add(link)
                         errors.append(f"backfill {slug}: dropped {link} after 3 failures")
             time.sleep(1.5)  # politeness between fetches
+            if only_slug:
+                # Focused runs narrate every item so the Actions log shows
+                # exactly where a series dies (resolve, extract, dedup).
+                logger.info(f"[{slug}] {activity}")
             if cf_blocked:
                 # Rapid-fire resolves trip CF's challenge rate limit —
                 # cool off so the burst doesn't burn the whole slice.
                 time.sleep(20)
                 if cf_streak >= 4:
-                    # NU is walling every resolve — further attempts just
-                    # keep the IP flagged. Flush and bail the drain; the
-                    # queue rides again on the next run after cooldown.
+                    # One poisoned request shouldn't starve the whole
+                    # queue: skip the rest of ITS slice. Only stop queue
+                    # processing entirely if consecutive requests all
+                    # storm (then NU really is walling the runner IP).
+                    stormed = True
                     logger.warning(
-                        f"{cf_streak} consecutive Cloudflare blocks — "
-                        "bailing drain until next run")
-                    bail_drain = True
+                        f"{cf_streak} consecutive Cloudflare blocks on "
+                        f"{slug} — skipping its slice until next run")
                     break
-            if time.time() - last_flush >= _DRAIN_FLUSH_S:
+            if time.time() - last_flush >= _QUEUE_FLUSH_S:
                 flush(slug, "processing", remaining + retry_next,
                       done, activity, processed_links)
                 last_flush = time.time()
@@ -600,7 +642,13 @@ def drain_requests(errors: list, max_chapters: int = 40,
         queue_out = remaining + retry_next
         flush(slug, "done" if not queue_out else "processing",
               queue_out, done, activity, processed_links)
-        if bail_drain:
+        stormed_reqs = stormed_reqs + 1 if stormed else 0
+        if stormed_reqs >= 2:
+            logger.warning(
+                "Consecutive requests storming Cloudflare — "
+                "pausing queue processing until next run")
+            bail_queue = True
+        if bail_queue:
             break
 
     if _browser_cm is not None:

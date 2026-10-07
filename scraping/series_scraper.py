@@ -147,9 +147,9 @@ def scrape_series_page(series_url: str, timeout: int = 60, max_pages: int = 1200
                        page=None, stop_at=None, start_pg: int = 2) -> Dict:
     """Scrape a NovelUpdates series page for synopsis and all paginated chapters.
 
-    `page` lets a caller inside a long-lived Playwright session (the
-    backfill drain) reuse it — sync_playwright() can't start again while
-    another instance is already running on this thread.
+    `page` lets a caller inside a long-lived Playwright session (request
+    queue processing) reuse it — sync_playwright() can't start again
+    while another instance is already running on this thread.
     `stop_at` (epoch seconds) bounds total scrape time — pagination stops
     early and the result is flagged `truncated` (with `stopped_pg`, the
     page to resume from) so the caller can retry on the next run instead

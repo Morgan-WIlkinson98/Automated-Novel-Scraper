@@ -1,24 +1,31 @@
-"""wuxiaworld.eu fallback source — plain JSON API, no Cloudflare wall.
+"""wuxiaworld.eu fallback source — Next.js SSR pages.
 
 When an NU-linked chapter resolve/extract fails (CF block, dead
 aggregator host, no site override), try fetching the same chapter from
-wuxiaworld.eu instead. Verified 2026-10: anonymous requests to
-/api/* succeed from datacenter IPs where NU-linked hosts 403.
+wuxiaworld.eu instead.
 
-Shape:
-    /api/novels/{slug}/           → novel metadata (numOfChaps, first_chapter)
-    /api/novels/?search={name}    → fuzzy novel search (results[].slug)
-    /api/getchapter/{slug}-{idx}/ → {index, title, text, nextChap, prevChap}
+History: the site previously exposed a JSON API under /api/* (novels,
+getchapter). That surface was retired in the October 2026 rebuild —
+the site is now server-rendered Next.js, and every page embeds its
+payload in a __NEXT_DATA__ script tag, which is actually cleaner:
+
+    /search?q={name}            → HTML results with /novel/{slug} links
+    /novel/{slug}               → pageProps.novel {title, altTitles,
+                                  chapterCount, firstChapterNumber,
+                                  latestChapterNumber}
+    /chapter/{slug}-{idx}       → pageProps.data.chapter {number, title,
+                                  paragraphs[]}  — `number` is the real
+                                  chapter number, authoritative over
+                                  title text.
 
 Numbering caveat: {slug}-{idx} uses wuxiaworld's own position index,
 which drifts from NU's "cN" numbering by however many prologue/extra
-rows sit before it. Chapter titles carry the real number ("Wu Dong
-Qian Kun Chapter 246"), and index order is monotonic, so we
-extrapolate-then-binary-search the index for the title whose parsed
-number matches. Unparseable or missing numbering = honest miss, never
-a wrong-chapter guess.
+rows sit before it. chapter.number is monotonic with the index, so we
+extrapolate-then-binary-search the index for the chapter whose number
+matches. Missing numbering = honest miss, never a wrong-chapter guess.
 """
 
+import json
 import logging
 import re
 import time
@@ -27,8 +34,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-_API = "https://wuxiaworld.eu/api"
-_CHAPTER_URL = "https://wuxiaworld.eu/chapter/{chap_slug}"
+_BASE = "https://wuxiaworld.eu"
+_NOVEL_URL = _BASE + "/novel/{slug}"
+_CHAPTER_URL = _BASE + "/chapter/{chap_slug}"
 _UA = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                   "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -36,9 +44,12 @@ _UA = {
 }
 _TIMEOUT = 15
 _MAX_PROBES = 8      # index-search fetches per chapter, worst case
-_PROBE_DELAY = 0.35  # politeness between JSON fetches
+_PROBE_DELAY = 0.35  # politeness between page fetches
 
-# Boilerplate lines wuxiaworld prepends to .text.
+_NEXT_DATA = re.compile(r'__NEXT_DATA__[^>]*>(.*?)</script>', re.S)
+_NOVEL_LINK = re.compile(r'/novel/([a-z0-9-]+)')
+
+# Boilerplate paragraphs wuxiaworld prepends to chapter bodies.
 _BOILER = re.compile(
     r"(?i)^(publishedat\b.*|if audio player doesn't work.*|"
     r"chapter\s*\d+(?:\.\d+)?\s*)$"
@@ -46,8 +57,9 @@ _BOILER = re.compile(
 
 
 def _slugify(name: str) -> str:
-    """NU-slug-style normalize — mirrors data.firestore_store._slugify
-    (and wuxiaworld's own slugs: apostrophes/colons fold the same way)."""
+    """NU-slug-style normalize — mirrors data.firestore_store._slugify.
+    Note it collapses "son-in-law" → "soninlaw" while wuxiaworld keeps
+    interior hyphens; the search fallback covers those mismatches."""
     import unicodedata
     s = unicodedata.normalize("NFKD", name or "") \
         .encode("ascii", "ignore").decode("ascii").lower()
@@ -57,13 +69,16 @@ def _slugify(name: str) -> str:
 
 
 def _get(path: str, params: dict = None):
-    """GET a wuxiaworld API path → parsed JSON, or None on any miss."""
+    """GET a wuxiaworld page → parsed __NEXT_DATA__ props, or None."""
     try:
-        r = requests.get(_API + path, params=params, headers=_UA,
+        r = requests.get(_BASE + path, params=params, headers=_UA,
                          timeout=_TIMEOUT)
         if not r.ok:
             return None
-        return r.json()
+        m = _NEXT_DATA.search(r.text)
+        if not m:
+            return None
+        return json.loads(m.group(1)).get("props", {}).get("pageProps")
     except Exception as e:
         logger.debug(f"wuxiaworld {path}: {e}")
         return None
@@ -74,78 +89,85 @@ def _norm(s: str) -> str:
 
 
 def _name_match(novel: dict, series_name: str) -> bool:
-    """Search-result sanity check — name or other_names must equal the
-    series name after normalization (fuzzy search otherwise returns the
-    whole catalog ranked by vibes)."""
+    """Novel-page sanity check — title or an alt title must equal the
+    series name after normalization (search ranking otherwise returns
+    the whole catalog by vibes)."""
     target = _norm(series_name)
     if not target:
         return False
-    if _norm(novel.get("name")) == target:
+    if _norm(novel.get("title") or novel.get("name")) == target:
         return True
-    for alias in novel.get("other_names") or []:
+    for alias in novel.get("altTitles") or novel.get("other_names") or []:
         text = alias.get("name") if isinstance(alias, dict) else alias
         if _norm(text) == target:
             return True
     return False
 
 
+def _novel(slug: str):
+    """/novel/{slug} → its pageProps.novel dict, or None."""
+    props = _get(f"/novel/{slug}")
+    return (props or {}).get("novel")
+
+
 def _novel_slug(series_name: str, cache: dict):
-    """series_name → wuxiaworld slug (or None), cached per drain run.
-    A novel must actually host chapters — stubs with numOfChaps=0 and
-    no first_chapter are dead ends."""
+    """series_name → wuxiaworld slug (or None), cached per run.
+    A novel must actually host chapters — stubs with chapterCount=0
+    (like NU-mirror entries) are dead ends."""
     if series_name in cache:
         return cache[series_name]
     slug = None
-    guess = _slugify(series_name)
-    n = _get(f"/novels/{guess}/")
-    # The slug alone isn't proof — a different novel can own it. Verify
-    # the name (or an alias) actually matches, and that chapters are
-    # hosted (numOfChaps lies on stubs; first_chapter doesn't).
-    if n and (n.get("numOfChaps") or n.get("first_chapter")) \
-            and _name_match(n, series_name):
-        slug = guess
+    n = _novel(_slugify(series_name))
+    if n and n.get("chapterCount") and _name_match(n, series_name):
+        slug = n.get("slug") or _slugify(series_name)
     else:
-        res = _get("/novels/", params={"search": series_name, "limit": 6})
-        for r in (res or {}).get("results", []):
-            if _name_match(r, series_name):
-                slug = r.get("slug")
+        # Search page results link straight to /novel/{slug}; probe a
+        # few candidates and keep the first verified name match with
+        # real chapters.
+        try:
+            r = requests.get(_BASE + "/search",
+                             params={"q": series_name}, headers=_UA,
+                             timeout=_TIMEOUT)
+            candidates = list(dict.fromkeys(
+                _NOVEL_LINK.findall(r.text)))[:5] if r.ok else []
+        except Exception as e:
+            logger.debug(f"wuxiaworld search: {e}")
+            candidates = []
+        for cand in candidates:
+            n = _novel(cand)
+            if n and n.get("chapterCount") \
+                    and _name_match(n, series_name):
+                slug = cand
                 break
     cache[series_name] = slug
     return slug
 
 
-def _title_num(title: str):
-    """Real chapter number out of a wuxiaworld title — same patterns the
-    NU release-table parser uses ("Chapter 246", "CH 23", bare digits).
-    Volume-style titles ("v2c10") are rejected unless an explicit
-    'chapter N' phrase exists — per-volume numbering can't map onto
-    NU's continuous count, and a false match is worse than a miss."""
-    if not title:
-        return None
-    if re.search(r"v\d+", title, re.I):
-        m = re.search(r"chapter\s*#?\s*(\d+)", title, re.I)
-        return int(m.group(1)) if m else None
-    from scraping.series_scraper import _guess_chapter_number
-    return _guess_chapter_number(title)
+def _chapter(slug: str, idx: int):
+    """/chapter/{slug}-{idx} → pageProps.data.chapter dict, or None."""
+    props = _get(f"/chapter/{slug}-{idx}")
+    return ((props or {}).get("data") or {}).get("chapter")
 
 
-def _clean_text(text: str) -> str:
-    """Strip wuxiaworld's prepended boilerplate, keep the body."""
-    lines = [ln for ln in (text or "").splitlines()
-             if not _BOILER.match(ln.strip())]
-    return "\n".join(lines).strip()
+def _clean_paragraphs(paragraphs) -> str:
+    """Join paragraph strings, dropping boilerplate lines."""
+    lines = [p.strip() for p in (paragraphs or [])
+             if isinstance(p, str) and not _BOILER.match(p.strip())]
+    return "\n\n".join(lines).strip()
 
 
-def fetch_chapter(series_name: str, num, cache: dict):
+def fetch_chapter(series_name: str, num, cache: dict, page=None):
     """Best-effort (series, NU chapter num) → wuxiaworld chapter.
 
     Returns dict(title, text, url, source_slug) on a verified number
-    match, else None. Probes ≤_MAX_PROBES JSON endpoints — cheap enough
-    to run per failed drain item."""
+    match, else None. Probes ≤_MAX_PROBES pages — cheap enough to run
+    per failed queue item. `page` is unused (plain HTTP suffices) but
+    accepted for signature parity with the other mirror sources."""
+    del page
     if num is None:
         return None
     if isinstance(num, float) and not num.is_integer():
-        return None  # fractional chapters (c72.5) can't map to wuxiaworld ints
+        return None  # fractional chapters (c72.5) can't map to int numbers
     try:
         num = int(num)
     except (TypeError, ValueError):
@@ -154,12 +176,12 @@ def fetch_chapter(series_name: str, num, cache: dict):
     if not slug:
         return None
 
-    # Index search: the slug's index and the real chapter number move
-    # together, so each probe's parsed number tells us which way to jump.
+    # Index search: the chapter index and chapter.number move together,
+    # so each probe's number tells us which way to jump.
     lo, hi = 1, None
     guess = num
     tried = set()
-    saw_chapter = False  # any getchapter hit at all — stub novels 404 every probe
+    saw_chapter = False  # any chapter hit at all — stubs 404 every probe
     for _ in range(_MAX_PROBES):
         if hi is not None and lo > hi:
             break
@@ -170,35 +192,34 @@ def fetch_chapter(series_name: str, num, cache: dict):
                 break
         tried.add(guess)
         time.sleep(_PROBE_DELAY)
-        d = _get(f"/getchapter/{slug}-{guess}/")
-        if not d or not d.get("text"):
-            # Past the hosted tail — pull the bound in.
+        c = _chapter(slug, guess)
+        real = (c or {}).get("number")
+        if real is None:
+            # Past the hosted tail (or unnumbered row) — pull bound in.
             hi = guess - 1 if hi is None else min(hi, guess - 1)
             guess = (lo + hi) // 2
             continue
         saw_chapter = True
-        real = _title_num(d.get("title") or "")
+        try:
+            real = int(real)
+        except (TypeError, ValueError):
+            real = None
         if real == num:
             return {
-                "title": (d.get("title") or "").strip() or f"Chapter {num}",
-                "text": _clean_text(d["text"]),
+                "title": (c.get("title") or "").strip() or f"Chapter {num}",
+                "text": _clean_paragraphs(c.get("paragraphs")),
                 "url": _CHAPTER_URL.format(chap_slug=f"{slug}-{guess}"),
                 "source_slug": slug,
             }
         if real is None:
             # Can't map unnumbered rows — nudge toward num and count the
             # probe; a couple of these exhausts the budget honestly.
-            guess = guess + 1 if guess < num else guess - 1
+            guess += 1 if num >= guess else -1
             continue
         if real < num:
             lo = guess + 1
-            guess += num - real  # offset is usually uniform — extrapolate
         else:
             hi = guess - 1
-            guess -= real - num
-    if not saw_chapter:
-        # Every probe 404'd — stub novel with no hosted chapters. Mark it
-        # dead so the rest of this series' failed items don't each burn
-        # a full probe budget against the same empty shelf.
-        cache[series_name] = None
+    if saw_chapter:
+        logger.debug(f"wuxiaworld {slug}: no index maps to chapter {num}")
     return None

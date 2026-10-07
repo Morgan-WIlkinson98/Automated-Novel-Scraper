@@ -294,8 +294,9 @@ def has_chapter(series: str, url: str) -> bool:
 
 
 def get_chapter(series: str, url: str):
-    """Chapter doc fields for a final URL, or None — the drain loop uses
-    this both to skip re-extraction and to spot docs worth lazy-healing."""
+    """Chapter doc fields for a final URL, or None — the request-queue
+    loop uses this both to skip re-extraction and to spot docs worth
+    lazy-healing."""
     resp = _req(
         "GET", f"{SERIES_COL}/{_slugify(series)}/chapters/{_hash(url)}")
     if resp.status_code == 404:
@@ -661,8 +662,8 @@ REQUESTS_COL = "novels_requests"
 
 def list_requests(statuses=("pending", "processing")):
     """Docs in novels_requests that still need work. The site queues a
-    full-series backfill here via the Pages Function; the poller drains
-    the queue each run."""
+    full-series backfill here via the Pages Function; the poller
+    processes the queue each run."""
     resp = _req("GET", REQUESTS_COL)
     if resp.status_code == 404:
         return []
@@ -739,7 +740,7 @@ def enqueue_backfill(series_name: str, series_url: str, reason: str = "") -> boo
 def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: float = 0.0, run_url: str = None, phase: str = ""):
     """Record the outcome of a poller run for the site dashboard.
     `phase` narrates what the run is doing while status == "running"
-    (setup → polling RSS → draining backfill)."""
+    (setup → polling RSS → processing request queue)."""
     try:
         resp = _req("PATCH", f"{META_COL}/{META_DOC}", json={"fields": _fields({
             "lastPollAt": _iso_now(),

@@ -75,11 +75,11 @@ def _new_context(browser):
 def resolve_in_page(page, url: str, timeout: int = 45) -> str:
     """Resolve an extnu/redirect link inside an existing browser page.
 
-    Shared-session variant for the backfill drain: the first navigation
-    solves Cloudflare once and the clearance cookie persists in the
-    context, so subsequent resolves ride the same session instead of
-    re-rolling the challenge per link (which is what got the drain
-    rate-limited)."""
+    Shared-session variant for request queue processing: the first
+    navigation solves Cloudflare once and the clearance cookie persists
+    in the context, so subsequent resolves ride the same session instead
+    of re-rolling the challenge per link (which is what got the queue
+    processing rate-limited)."""
     # Navigate and wait until DOM is loaded, not networkidle —
     # the Cloudflare challenge may keep network busy.
     page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
