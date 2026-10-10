@@ -1,0 +1,58 @@
+direction: right
+
+title: "Backfill request queue (poller.py process_request_queue / queue_worker.py)" {
+  near: top-center
+  shape: text
+  style.font-size: 24
+}
+
+you: "You on the site" {
+  shape: person
+}
+
+fn: "morganwilkinson.com\nPages Function\n(Access-gated)" {
+  shape: cloud
+}
+
+reqs: "novels_requests\ncollection\n(one doc per series:\nqueue, progress, status)" {
+  shape: queue
+}
+
+poller: "poller.py (cron) or\nqueue_worker.py (on demand)\nshared headed-browser session" {
+  shape: rectangle
+}
+
+pass1: "Pass 1 — promote requests\nscrape NU series page\n(paginated release table,\nresumable via scrapePage)" {
+  shape: rectangle
+}
+
+pass2: "Pass 2 — work the queue\nper-request time slice,\nprogress flushed every 60s" {
+  shape: rectangle
+}
+
+mirrors: "Mirror chain\nwuxiaworld.eu →\nnovelfull.net →\nnovellunar.com" {
+  shape: cloud
+}
+
+nulink: "NU /extnu/ resolve + extract\n(last resort)" {
+  shape: rectangle
+}
+
+fs: "Firestore\nnovels/{slug}/chapters\n+ novels_updates feed\n+ novels_meta/state" {
+  shape: cylinder
+}
+
+you -> fn: "\"Fetch missing chapters\""
+fn -> reqs: "writes request doc"
+fn -> poller: "or triggers worker now"
+reqs -> poller: "pending / paused / retryable"
+poller -> pass1: "first"
+pass1 -> reqs: "chapter queue\n(+ resume cursor)"
+pass1 -> pass2: "then"
+pass2 -> mirrors: "try mirror text first"
+mirrors -> nulink: "all miss"
+pass2 -> nulink: "mirror miss"
+nulink -> fs: "save_chapter"
+mirrors -> fs: "save_chapter"
+pass2 -> reqs: "status + progress"
+pass2 -> fs: "run meta"

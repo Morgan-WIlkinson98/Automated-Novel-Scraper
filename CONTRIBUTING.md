@@ -1,228 +1,81 @@
-# Contributing to AI Novel Web Scraper
+# Contributing to Novel Scraper
 
-Thank you for your interest in contributing to the AI Novel Web Scraper project! This document provides guidelines and instructions for contributing.
+> **Who this is for:** anyone proposing a change to this repository.
+> **Repository stamp:** base commit `217431f` · branch `feature/update-documentation-2026-10-10` · dated 2026-10-10.
+> Previous version: [docs/archive/2026-10-10_CONTRIBUTING.md](docs/archive/2026-10-10_CONTRIBUTING.md)
 
-## Table of Contents
+This is a personal project, but contributions follow a fixed workflow so the
+owner can review without reconstructing context.
 
-- [Code of Conduct](#code-of-conduct)
-- [Getting Started](#getting-started)
-- [Development Workflow](#development-workflow)
-- [Coding Standards](#coding-standards)
-- [Testing](#testing)
-- [Submitting Changes](#submitting-changes)
-- [Reporting Issues](#reporting-issues)
+## Workflow — the short version
 
-## Code of Conduct
+1. **`git fetch --all --prune`**, then branch from latest `main`. Never commit
+   to `main` directly.
+2. **Open a GitHub issue first** describing the work — every branch maps to
+   one. Use the bug-report or feature-request template.
+3. Branch name: `feature/<short-description>` (or `fix/<desc>` for a bug).
+4. Make the change. Keep it small and focused — one feature or fix per branch.
+5. **Open a draft PR to `main`** with `Closes #<issue>` in the body; mark
+   ready only when verified. Link the PR back on the issue.
+6. The owner handles the merge.
 
-- Be respectful and inclusive
-- Provide constructive feedback
-- Focus on what is best for the community
-- Show empathy towards other community members
-
-## Getting Started
-
-### Prerequisites
-
-- Python 3.8 or higher
-- Git
-- Virtual environment (recommended)
-
-### Setup Development Environment
-
-1. **Fork and clone the repository**
+## Setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/AI-Web-Scraper.git
-cd AI-Web-Scraper
-```
-
-2. **Create a virtual environment**
-
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. **Install dependencies**
-
-```bash
+python -m venv .venv && source .venv/bin/activate   # Python >= 3.10
 pip install -r requirements.txt
+python -m playwright install chromium
+cp core/config.example.py config.py   # fill in your own credentials — never commit it
 ```
 
-4. **Install development dependencies** (optional but recommended)
+Full instructions: [docs/02-setup-and-quickstart.md](docs/02-setup-and-quickstart.md).
+
+## Rules that matter here
+
+- **Secrets**: `config.py`, cookies, service-account JSON — never commit, never
+  paste into issues/PRs. Actions secrets are `NU_RSS_FEED_URL`, `NU_COOKIES`,
+  `FIREBASE_SERVICE_ACCOUNT_JSON`.
+- **Never put a backslash inside an f-string expression** (`f"{x.replace('\n',' ')}"`
+  is a SyntaxError on <3.12). Assign first, interpolate second.
+- **Packages**: don't add or upgrade a dependency without vetting it against
+  [docs/PACKAGE-SECURITY.md](docs/PACKAGE-SECURITY.md) and getting approval —
+  prefer building in-repo first.
+- **Database safety**: back up `chapters.db` before any schema change; deletes
+  of user data need explicit approval (see `AGENTS.md` data-safety rules).
+- **Docs in the same PR**: if you change behavior, update the matching file in
+  `docs/` in the same PR — stale docs are a bug.
+- **Politeness is a feature**: keep `robots.txt` checks and rate limits intact;
+  don't add code that bypasses them.
+
+## Verifying your change
+
+There is no test suite. Before marking a PR ready:
 
 ```bash
-pip install pytest pytest-cov black flake8 mypy
+python -m compileall . -q                              # syntax
+python -c "import main, web_ui, poller, queue_worker"  # imports
+python web_ui.py                                        # UI boots on :6110
 ```
 
-## Development Workflow
+More paths: [docs/06-testing-and-debugging.md](docs/06-testing-and-debugging.md).
 
-### Branch Strategy
+## PR description must cover
 
-- `main` - Stable production code
-- `v2` - Current development branch
-- Feature branches - `feature/your-feature-name`
-- Bugfix branches - `fix/your-bug-fix`
+Summary · why (link the issue) · approach and alternatives · how to test
+(numbered steps) · review focus · checklist. The PR template
+(`.github/pull_request_template.md`) walks you through it.
 
-### Making Changes
+## Code conventions
 
-1. **Create a new branch**
+- Package imports, not flat-module ones: `from data.storage import ...`,
+  `from rss.rss_watcher import ...`.
+- Settings go through `core/settings.py` (env → `config.py` → defaults) —
+  never read `config.py` directly from app code.
+- New scraping code routes through `scraping/politeness.py`.
+- Match the existing style; keep functions focused.
 
-```bash
-git checkout -b feature/your-feature-name
-```
+## Reporting issues
 
-2. **Make your changes**
-
-3. **Test your changes**
-
-```bash
-# Run tests (when available)
-pytest
-
-# Run linting
-flake8 .
-black --check .
-mypy .
-```
-
-4. **Commit your changes**
-
-```bash
-git add .
-git commit -m "feat: add your feature description"
-```
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/) format:
-- `feat:` - New feature
-- `fix:` - Bug fix
-- `docs:` - Documentation changes
-- `style:` - Code style changes (formatting, etc.)
-- `refactor:` - Code refactoring
-- `test:` - Adding or updating tests
-- `chore:` - Maintenance tasks
-
-5. **Push and create a pull request**
-
-```bash
-git push origin feature/your-feature-name
-```
-
-Then create a PR on GitHub.
-
-## Coding Standards
-
-### Python Style
-
-- Follow PEP 8 style guide
-- Use type hints where appropriate
-- Write docstrings for all functions and classes
-- Keep functions focused and small
-- Use meaningful variable names
-
-### Example Code Style
-
-```python
-"""
-Module docstring describing the purpose of this module.
-"""
-
-from typing import Optional
-import requests
-
-
-def fetch_data(url: str, timeout: int = 15) -> Optional[str]:
-    """
-    Fetch data from a URL with a timeout.
-
-    Args:
-        url: The URL to fetch from
-        timeout: Request timeout in seconds
-
-    Returns:
-        The response text if successful, None otherwise
-    """
-    try:
-        response = requests.get(url, timeout=timeout)
-        response.raise_for_status()
-        return response.text
-    except requests.RequestException as e:
-        print(f"Failed to fetch {url}: {e}")
-        return None
-```
-
-### Documentation
-
-- Update relevant documentation when adding features
-- Keep README.md up to date
-- Add inline comments for complex logic
-- Update API docs when changing interfaces
-
-## Testing
-
-### Running Tests
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=.
-
-# Run specific test file
-pytest tests/test_extractor.py
-```
-
-### Writing Tests
-
-- Write tests for new features
-- Maintain test coverage above 80%
-- Use descriptive test names
-- Test both success and failure cases
-
-## Submitting Changes
-
-### Pull Request Checklist
-
-- [ ] Code follows project style guidelines
-- [ ] Tests pass locally
-- [ ] Documentation is updated
-- [ ] Commit messages follow conventional commits format
-- [ ] PR description clearly describes the changes
-- [ ] No merge conflicts
-
-### Pull Request Template
-
-Use the provided PR template when creating pull requests.
-
-## Reporting Issues
-
-### Bug Reports
-
-Use the bug report issue template and include:
-- Clear description of the bug
-- Steps to reproduce
-- Expected behavior
-- Actual behavior
-- Environment details (OS, Python version)
-- Logs or error messages
-
-### Feature Requests
-
-Use the feature request issue template and include:
-- Clear description of the feature
-- Use case for the feature
-- Possible implementation approach
-- Any alternatives considered
-
-## Areas Where Help Is Needed
-
-- Adding more site overrides for difficult-to-scrape sites
-- Improving extraction accuracy
-- Adding tests
-- Documentation improvements
-- Performance optimizations
-
-## Questions?
-
-Feel free to open an issue for questions or discussion!
+Use the templates in `.github/ISSUE_TEMPLATE/`. For bugs: what you did, what
+you expected, what happened, logs. Never include credentials, cookies, or
+your private RSS URL.
