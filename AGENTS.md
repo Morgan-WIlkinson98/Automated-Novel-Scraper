@@ -158,8 +158,23 @@ Before any PR completion:
 - Every new feature/change must be developed on a feature branch named
   `feature/<short-description-or-issue>` created from `main` — never commit
   directly to `main`.
-- Every feature branch must get a pull request whose description states what
-  it addresses/fixes and how to test the change.
+- Every feature branch must get a pull request whose description is genuinely
+  useful to a reviewer — full enough that they don't have to reconstruct
+  context from the diff. Include:
+
+  - **Summary** — what changed in 1-3 bullets describing behavior, not filenames
+  - **Why** — what it addresses/fixes and why; the most important part. Link
+    the issue it closes when one exists
+  - **Approach** — key implementation decisions and alternatives rejected
+    (when non-obvious)
+  - **How to test** — exact steps or commands and the expected result
+  - **Review focus** — point reviewers at risky, subtle, or uncertain parts
+    when relevant
+  - **Screenshots/output** — before/after for UI changes
+  - **Checklist** — tests added/updated, docs updated, migrations/rollback
+    considered, security/permissions reviewed
+
+  Items that don't apply may be dropped rather than left as empty ritual.
 
 When working on this repository:
 1. Create feature branch from main: `feature/short-description`
