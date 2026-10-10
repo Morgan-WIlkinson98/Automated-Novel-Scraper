@@ -52,6 +52,9 @@ Secrets live only in GitHub Actions secrets — never in source,
   latest `main`; local branches may be stale or already merged
 - Issue first — create a GitHub issue for the work before branching;
   every feature branch maps to an issue
+- Link issues ↔ PRs — after creating an issue or PR, search for its
+  counterpart and link them together (`Closes #N` in the PR body, PR
+  referenced on the issue)
 - Feature branches off `main`; never commit directly to `main` or `dev`
 - Draft PR first; mark ready only when verified
 - PR body must include: what changed and why, breaking changes or
