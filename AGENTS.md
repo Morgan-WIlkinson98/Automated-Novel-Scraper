@@ -48,7 +48,14 @@ Secrets live only in GitHub Actions secrets — never in source,
 
 ### Branch & PR hygiene
 
-- Feature branches off `main`; never commit directly to `main` or `dev`
+- Fetch before branching — `git fetch --all --prune`, then base off the
+  latest `main`; local branches may be stale or already merged
+- Issue first — create a GitHub issue for the work before branching;
+  every feature branch maps to an issue
+- Link issues ↔ PRs — after creating an issue or PR, search for its
+  counterpart and link them together (`Closes #N` in the PR body, PR
+  referenced on the issue)
+- Feature branches off `main`; never commit directly to `main`
 - Draft PR first; mark ready only when verified
 - PR body must include: what changed and why, breaking changes or
   migration notes, numbered how-to-test steps a reviewer can follow,
@@ -82,8 +89,13 @@ the vetting checklist.** `pip install` is remote code execution, not a
 harmless convenience. The full policy lives in
 [docs/PACKAGE-SECURITY.md](docs/PACKAGE-SECURITY.md); summary:
 
-- **Necessity** — prefer the standard library, an existing dependency, or a
-  few lines of code; reject disproportionate dependency trees.
+- **Necessity / build-first** — always try building the functionality
+  in-repo first (standard library, an existing dependency, or a few
+  lines of code). Before adding any package, weigh build-yourself vs.
+  third-party — implementation effort, maintenance burden, supply-chain
+  surface, features gained — present the comparison with a
+  recommendation, and get the user's approval for the path. Reject
+  disproportionate dependency trees.
 - **Authenticity** — verify the package name character-by-character against
   the project's official docs/repo; confirm the PyPI page links back to the
   trusted repository; watch for typosquats and lookalike names.
@@ -177,7 +189,9 @@ Before any PR completion:
   Items that don't apply may be dropped rather than left as empty ritual.
 
 When working on this repository:
-1. Create feature branch from main: `feature/short-description`
+1. Fetch the latest branches (`git fetch --all --prune`), create a
+   GitHub issue for the work, then create a feature branch from main:
+   `feature/short-description`
 2. Implement changes following Python best practices
 3. Test thoroughly before creating PR
 4. Create draft PR to main with:
@@ -185,5 +199,4 @@ When working on this repository:
    - Reviewer: repository owner/user
 5. Request user testing and confirmation
 6. Create final backup after user confirmation
-7. Merge to dev for further testing
-8. User handles main merge manually
+7. User handles main merge manually
