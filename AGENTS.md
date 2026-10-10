@@ -55,7 +55,7 @@ Secrets live only in GitHub Actions secrets — never in source,
 - Link issues ↔ PRs — after creating an issue or PR, search for its
   counterpart and link them together (`Closes #N` in the PR body, PR
   referenced on the issue)
-- Feature branches off `main`; never commit directly to `main` or `dev`
+- Feature branches off `main`; never commit directly to `main`
 - Draft PR first; mark ready only when verified
 - PR body must include: what changed and why, breaking changes or
   migration notes, numbered how-to-test steps a reviewer can follow,
@@ -199,5 +199,4 @@ When working on this repository:
    - Reviewer: repository owner/user
 5. Request user testing and confirmation
 6. Create final backup after user confirmation
-7. Merge to dev for further testing
-8. User handles main merge manually
+7. User handles main merge manually
