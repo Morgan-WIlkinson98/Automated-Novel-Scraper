@@ -67,3 +67,12 @@ Before any PR completion:
 - Database schema changes
 - Browser compatibility for scraping
 - RSS feed authentication failures
+
+### Infrastructure Facts (verify in docs before assuming)
+- `mw-novels` Firebase project is on the **Blaze plan** — billing enabled
+  on account `016C4E-045E5A-AED2E2`. Firestore, Cloud Run, and other paid
+  APIs can bill on overage; nothing silently upgrades anything.
+- Free-tier guardrails for the Cloud Run worker: `novels_meta/worker_usage`
+  monthly execution ledger + `WORKER_MAX_MONTHLY_RUNS` cap.
+- Always read the repo docs/rules before answering infrastructure or
+  billing-state questions — do not infer project state.

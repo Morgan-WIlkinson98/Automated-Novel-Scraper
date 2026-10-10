@@ -5,20 +5,20 @@
 # token minted from a service-account key (python3 + google-auth, both
 # already used by this repo) and pushes the image with plain docker.
 #
-# One-time setup (console.cloud.google.com, project mw-novels):
-#   1. Upgrade the project to the Blaze plan (link a billing account).
-#      Usage stays $0 — a queue run costs ~600 vCPU-s + ~1200 GiB-s
-#      against free tiers of 180k / 360k per month, and executions are
-#      hard-capped by the monthly ledger (WORKER_MAX_MONTHLY_RUNS,
-#      default 20 — worst case ~144k vCPU-s) so the free tier cannot be
-#      exceeded. NOTE: Blaze also makes *Firestore* overage billable —
-#      check the console's storage usage first (1 GiB free, cumulative).
-#   2. Grant the poller service account (the FIREBASE_SERVICE_ACCOUNT_JSON
+# One-time setup (console.cloud.google.com, project mw-novels —
+# ALREADY on the Blaze plan, billing account 016C4E-045E5A-AED2E2):
+#   1. Grant the poller service account (the FIREBASE_SERVICE_ACCOUNT_JSON
 #      one) these roles on the project:
 #        - Cloud Run Developer        (roles/run.developer)
 #        - Artifact Registry Writer   (roles/artifactregistry.writer)
 #        - Service Usage Consumer     (roles/serviceusage.serviceUsageConsumer)
+#        - Cloud Run Invoker          (roles/run.invoker) — for the site's
+#                                     jobs:run trigger (NOVELS_SA_JSON)
 #      It already needs datastore.user for Firestore — unchanged.
+#      Free-tier guardrails: executions are hard-capped monthly by the
+#      Firestore ledger (WORKER_MAX_MONTHLY_RUNS, default 20 — worst
+#      case ~144k vCPU-s vs the 180k allowance), and a spend cap budget
+#      can hard-pause the run.googleapis.com service in the console.
 #
 # Required env:
 #   FIREBASE_SERVICE_ACCOUNT_JSON  — SA key JSON (or path to the file);
