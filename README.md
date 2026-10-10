@@ -315,6 +315,36 @@ GitHub Actions cron → python poller.py (single pass) → Firestore
                                           browser reads (Access-gated)
 ```
 
+### On-demand worker (Cloud Run Job)
+
+Queue processing doesn't have to ride GitHub's schedule: the
+`novels-worker` Cloud Run **Job** on the `mw-novels` project runs
+`queue_worker.py` — a single pass over `novels_requests` with no RSS
+phase — and scales to zero when done. The site's "Fetch missing
+chapters" and "Run poller now" buttons execute the job directly via the
+Cloud Run REST API (per-execution `POLL_ONLY_SLUG` override for a single
+series), falling back to `workflow_dispatch` if the worker call fails.
+Jobs fit the workload better than a Cloud Run service: full CPU for the
+whole run, no scale-to-zero kill on background work, and usage sits at
+$0 inside the free tier (~300 full runs/month headroom).
+
+Deploy it with `tools/deploy_worker.sh` (docker + the SA key — no
+`gcloud` needed); the script's header documents the IAM roles.
+`mw-novels` is already on the **Blaze** plan (billing enabled), so the
+job runs inside the existing free tier. Executions are hard-capped
+monthly by a Firestore ledger (`novels_meta/worker_usage`,
+`WORKER_MAX_MONTHLY_RUNS` default 20 — worst case ~144k vCPU-s vs the
+180k free allowance), enforced inside the job itself so direct API
+launches can't overrun either; a spend-cap budget on `run.googleapis.com`
+(Billing → Budgets, Preview) is the console-side hard stop.
+
+```
+Site button → Pages Function → Cloud Run Job (novels-worker)
+                                   │  queue_worker.py — one queue pass
+                                   ▼  (mirror chain → NU-link fallback)
+                               Firestore ◄──── GitHub poller (fallback)
+```
+
 ### Required env / Actions secrets
 
 | Env var | Secret | Purpose |
