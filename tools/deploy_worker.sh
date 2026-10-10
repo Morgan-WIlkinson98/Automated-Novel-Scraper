@@ -8,7 +8,11 @@
 # One-time setup (console.cloud.google.com, project mw-novels):
 #   1. Upgrade the project to the Blaze plan (link a billing account).
 #      Usage stays $0 — a queue run costs ~600 vCPU-s + ~1200 GiB-s
-#      against free tiers of 180k / 360k per month.
+#      against free tiers of 180k / 360k per month, and executions are
+#      hard-capped by the monthly ledger (WORKER_MAX_MONTHLY_RUNS,
+#      default 20 — worst case ~144k vCPU-s) so the free tier cannot be
+#      exceeded. NOTE: Blaze also makes *Firestore* overage billable —
+#      check the console's storage usage first (1 GiB free, cumulative).
 #   2. Grant the poller service account (the FIREBASE_SERVICE_ACCOUNT_JSON
 #      one) these roles on the project:
 #        - Cloud Run Developer        (roles/run.developer)

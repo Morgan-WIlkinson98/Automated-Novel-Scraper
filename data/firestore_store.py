@@ -15,6 +15,8 @@ Collections (Firestore project mw-novels):
                                      Latest-updates tab (id = sha256(url))
     novels_seen/{guid_hash}        — RSS dedup (replaces seen_entries.db)
     novels_meta/state              — latest poller run status
+    novels_meta/worker_usage       — monthly Cloud Run worker execution
+                                     ledger (hard free-tier cap)
 
 The companion site app reads `novels` + `novels_meta` client-side via
 the Firestore REST API behind Cloudflare Access; `novels_seen` is
@@ -759,3 +761,48 @@ def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: fl
     except Exception as e:
         logger.error(f"Failed to save run meta: {e}")
         raise DatabaseError(f"Failed to save run meta: {e}") from e
+
+
+WORKER_USAGE_DOC = "worker_usage"
+
+
+def claim_worker_run(max_runs: int = None) -> bool:
+    """Monthly hard cap on Cloud Run worker executions — the Blaze free
+    tier doesn't stop at its limits, it silently starts billing, so the
+    code has to. Reads novels_meta/worker_usage {month, runs}; a new
+    calendar month resets the counter. Returns True when the run may
+    proceed (and claims a slot by incrementing), False when the monthly
+    budget is spent or the ledger can't be written — a run that can't
+    be accounted for doesn't launch.
+
+    The cap is in executions, not seconds: with the job's worst-case
+    shape (2 vCPU × 3600s = 7200 vCPU-s, 7200 GiB-s per run), 20 runs
+    stays under 180k vCPU-s / 360k GiB-s with margin.
+    """
+    import os
+    cap = max_runs or int(os.getenv("WORKER_MAX_MONTHLY_RUNS", "20"))
+    month = time.strftime("%Y-%m", time.gmtime())
+    path = f"{META_COL}/{WORKER_USAGE_DOC}"
+
+    runs = 0
+    resp = _req("GET", path)
+    if resp.ok:
+        fields = resp.json().get("fields", {})
+        if (fields.get("month") or {}).get("stringValue") == month:
+            runs = int(_from_field(fields.get("runs") or {}) or 0)
+    elif resp.status_code != 404:
+        logger.warning(f"worker usage read failed: {resp.status_code}")
+        return False
+
+    if runs >= cap:
+        logger.warning(
+            f"Worker monthly cap reached: {runs}/{cap} runs in {month}")
+        return False
+
+    resp = _req("PATCH", path, json={"fields": _fields({
+        "month": month, "runs": runs + 1, "lastRunAt": _iso_now()})})
+    if not resp.ok:
+        logger.warning(f"worker usage write failed: {resp.status_code}")
+        return False
+    logger.info(f"Worker run claimed: {runs + 1}/{cap} for {month}")
+    return True

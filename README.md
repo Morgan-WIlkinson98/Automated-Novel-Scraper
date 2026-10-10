@@ -332,6 +332,12 @@ Deploy it with `tools/deploy_worker.sh` (docker + the SA key — no
 `gcloud` needed); the script's header documents the one-time Blaze
 upgrade and IAM roles. Requires the `mw-novels` project on the Blaze
 plan — free-tier usage stays $0 but a billing account must be linked.
+Executions are hard-capped monthly by a Firestore ledger
+(`novels_meta/worker_usage`, `WORKER_MAX_MONTHLY_RUNS` default 20 —
+worst case ~144k vCPU-s vs the 180k free allowance), enforced inside
+the job itself so direct API launches can't overrun either. Blaze also
+makes *Firestore* overage billable: check console storage usage before
+upgrading (1 GiB free, cumulative).
 
 ```
 Site button → Pages Function → Cloud Run Job (novels-worker)

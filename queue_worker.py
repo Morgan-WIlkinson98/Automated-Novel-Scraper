@@ -80,6 +80,14 @@ def main() -> int:
 
     try:
         firestore_store.init_storage()  # validate credentials up front
+
+        # Hard free-tier cap: Blaze bills silently past the free limits,
+        # so executions are counted in novels_meta/worker_usage and
+        # refused past WORKER_MAX_MONTHLY_RUNS. Enforced here (not just
+        # in the site trigger) so direct API launches are capped too.
+        if not firestore_store.claim_worker_run():
+            logger.error("Worker monthly run budget exhausted — exiting")
+            return 3
         report_phase("starting")
 
         only_slug = (os.getenv("POLL_ONLY_SLUG") or "").strip() or None
