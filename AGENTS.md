@@ -155,6 +155,12 @@ Before any PR completion:
 
 ## Development Workflow
 
+- Every new feature/change must be developed on a feature branch named
+  `feature/<short-description-or-issue>` created from `main` — never commit
+  directly to `main`.
+- Every feature branch must get a pull request whose description states what
+  it addresses/fixes and how to test the change.
+
 When working on this repository:
 1. Create feature branch from main: `feature/short-description`
 2. Implement changes following Python best practices
