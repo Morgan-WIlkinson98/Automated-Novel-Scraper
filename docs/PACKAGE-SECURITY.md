@@ -21,9 +21,14 @@ Every dependency is attack surface — treat adding one as a security decision.
 
 Before installing any package, answer each item and record the result:
 
-### 1. Necessity
-- [ ] Can the need be met with the standard library, an existing dependency, or a
-      small amount of code? If yes, do not install.
+### 1. Necessity — build first
+- [ ] Always try building the functionality in-repo first: standard
+      library, an existing dependency, or a small amount of code. If the
+      in-repo implementation works, do not install.
+- [ ] Before adding any package, weigh build-yourself vs. third-party
+      (implementation effort, maintenance burden, supply-chain surface,
+      features gained) and present the comparison with a recommendation —
+      proceed only after the user approves the path.
 - [ ] Is the package's weight proportionate? (Avoid a 500-dependency tree for a
       one-line utility.)
 
