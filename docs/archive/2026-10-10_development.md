@@ -1,3 +1,9 @@
+---
+ARCHIVED 2026-10-10 — originally at docs/development.md.
+Reason: references the old AI-Web-Scraper repo name and a retired v2 branch, flat module layout, and a pytest suite that does not exist.
+Replaced by: [../02-setup-and-quickstart.md](../02-setup-and-quickstart.md) and [../06-testing-and-debugging.md](../06-testing-and-debugging.md)
+---
+
 # Development Guide
 
 This guide provides detailed instructions for developing, testing, and debugging the AI Novel Web Scraper.

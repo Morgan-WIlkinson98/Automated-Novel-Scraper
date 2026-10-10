@@ -1,0 +1,51 @@
+direction: right
+
+title: "Novel Scraper — two ways to run" {
+  near: top-center
+  shape: text
+  style.font-size: 24
+}
+
+nu: "NovelUpdates\n(private RSS feed + series pages)" {
+  shape: cloud
+}
+
+local: "Local mode (this repo on your machine)" {
+  main: "main.py\nRSS watcher loop" {
+    shape: rectangle
+  }
+  web: "web_ui.py\nFlask UI on :6110" {
+    shape: rectangle
+  }
+  sqlite: "chapters.db + seen_entries.db\n(SQLite files)" {
+    shape: cylinder
+  }
+}
+
+cloud: "Cloud mode (scheduled, no always-on host)" {
+  gha: "GitHub Actions\npoll.yml every 30 min\n→ poller.py" {
+    shape: rectangle
+  }
+  worker: "Cloud Run Job\nnovels-worker\n→ queue_worker.py" {
+    shape: rectangle
+  }
+  fs: "Firestore\nproject mw-novels" {
+    shape: cylinder
+  }
+}
+
+site: "morganwilkinson.com\nNovels app (reads only)" {
+  shape: cloud
+}
+
+nu -> local.main: "RSS entries"
+local.main -> nu: "resolve links, fetch chapters"
+local.main -> local.sqlite: "save chapters + seen state"
+local.web -> local.sqlite: "browse, read, export EPUB"
+
+nu -> cloud.gha: "RSS entries"
+cloud.gha -> nu: "resolve links, fetch chapters"
+cloud.gha -> cloud.fs: "chapters, seen state,\nrun status"
+cloud.worker -> cloud.fs: "queued backfill results"
+site -> cloud.fs: "Firestore REST reads"
+site -> cloud.worker: "jobs:run trigger"

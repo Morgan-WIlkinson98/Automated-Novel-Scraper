@@ -1,3 +1,9 @@
+---
+ARCHIVED 2026-10-10 — originally at docs/deployment.md.
+Reason: describes a hypothetical Dockerfile/systemd setup that differs from the real ones, and predates the GitHub Actions poller and Cloud Run worker.
+Replaced by: [../02-setup-and-quickstart.md](../02-setup-and-quickstart.md) and [../05-configuration-and-services.md](../05-configuration-and-services.md)
+---
+
 # Deployment Guide
 
 This guide covers deploying the AI Novel Web Scraper in various environments, from local development to production servers.

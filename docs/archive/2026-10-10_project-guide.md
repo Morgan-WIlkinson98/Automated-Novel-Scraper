@@ -1,3 +1,9 @@
+---
+ARCHIVED 2026-10-10 — originally at docs/project-guide.md.
+Reason: broad pre-cloud overview superseded by the new docs set; useful detail folded into the replacements.
+Replaced by: [../README.md](../README.md) and [../01-overview-and-architecture.md](../01-overview-and-architecture.md)
+---
+
 # Novel Scraper Project Guide
 
 This guide is a one-stop reference for the project: what it does, how to install and run it, how the different pieces fit together, and how releases and development are managed.

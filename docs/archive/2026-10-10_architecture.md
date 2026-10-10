@@ -1,3 +1,9 @@
+---
+ARCHIVED 2026-10-10 — originally at docs/architecture.md.
+Reason: describes the pre-package flat-module architecture from before the rss/, scraping/, core/, data/ reorganization and before Firestore cloud mode; no longer matches the code.
+Replaced by: [../01-overview-and-architecture.md](../01-overview-and-architecture.md)
+---
+
 # System Architecture
 
 This document describes the architecture of the AI Novel Web Scraper system, including component interactions, data flow, and design decisions.

@@ -1,0 +1,58 @@
+direction: down
+
+title: "One RSS entry through the pipeline (main.py handle_new_entry)" {
+  near: top-center
+  shape: text
+  style.font-size: 24
+}
+
+entry: "New RSS entry\n(title = series, link = NU /extnu/ redirect)" {
+  shape: page
+}
+
+catalog: "Save series row\n(series_info / novels doc)" {
+  shape: rectangle
+}
+
+resolve: "Resolve /extnu/ link\nlink_resolver.py\n(extnu links go straight to\nheaded Chromium — Cloudflare)" {
+  shape: rectangle
+}
+
+extract: "Extract chapter text\ngeneric_extractor.py" {
+  shape: rectangle
+}
+
+methods: "1. trafilatura\n2. readability-lxml\n3. rendered HTML (Playwright)\n4. per-domain CSS override\n(site_overrides.py)" {
+  shape: rectangle
+}
+
+check: "Quality check:\n≥500 chars, ≥3 paragraphs" {
+  shape: diamond
+}
+
+save: "save_chapter()\nurl, series, label, text,\nmethod, group, nuLink" {
+  shape: rectangle
+}
+
+sync: "Series-page sync\nscrape_series_page\n(synopsis + full release table;\nheals group data)" {
+  shape: rectangle
+}
+
+dead: "Retry on next poll;\nafter 3 failures, queue a\nseries backfill (cloud mode)" {
+  shape: page
+}
+
+db: "Storage\nSQLite or Firestore" {
+  shape: cylinder
+}
+
+entry -> catalog: "series name + URL"
+entry -> resolve: "feed link"
+resolve -> extract: "final hosting URL"
+extract -> methods: "tries in order"
+methods -> check: "candidate text"
+check -> save: "pass"
+check -> dead: "fail"
+save -> db: "write"
+save -> sync: "background thread\n(inline in one-shot runs)"
+sync -> db: "synopsis, release table,\ngroup heal"
