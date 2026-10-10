@@ -75,6 +75,35 @@ agent-run command — must guarantee no important data is lost:
 - **Prefer recoverable deletes** — soft-delete/archive flags, backups,
   export-before-migration — wherever practical.
 
+## Package & Dependency Installation Security
+
+**Core rule: never install, upgrade, or add a dependency without completing
+the vetting checklist.** `pip install` is remote code execution, not a
+harmless convenience. The full policy lives in
+[docs/PACKAGE-SECURITY.md](docs/PACKAGE-SECURITY.md); summary:
+
+- **Necessity** — prefer the standard library, an existing dependency, or a
+  few lines of code; reject disproportionate dependency trees.
+- **Authenticity** — verify the package name character-by-character against
+  the project's official docs/repo; confirm the PyPI page links back to the
+  trusted repository; watch for typosquats and lookalike names.
+- **Reputation & maintenance** — real adoption (downloads, dependents,
+  contributors), commits and a release within the last 12 months, preferably
+  multiple maintainers and a `SECURITY.md`.
+- **Vulnerability status** — the exact version has no unpatched Critical/High
+  findings in OSV / deps.dev and is not in the OSV malicious-packages set.
+- **Freshness** — prefer versions published 7–30+ days ago; brand-new
+  releases are the highest-risk moment for supply-chain attacks.
+- **Install-script scrutiny** — check for `setup.py`/build hooks that run or
+  fetch code at install time; prefer wheels (`--only-binary :all:`).
+- **Exact pinning + lockfile** — pin `==` versions in `requirements*.txt` /
+  `pyproject.toml`; prefer `pip install --require-hashes`.
+- **Post-install audit** — run `pip-audit`, review the transitive tree with
+  `pipdeptree` / deps.dev, commit the updated manifests, re-run tests.
+- **Agents**: report a short vetting summary and get approval before any
+  install not already in the manifests; PyPI only — no alternate indexes,
+  no `curl | sh`, no `--no-deps` side installs.
+
 ## Python Code Quality Rules
 
 ### F-String Syntax (CRITICAL)
@@ -125,6 +154,27 @@ Before any PR completion:
 - [ ] RSS authentication works if configured
 
 ## Development Workflow
+
+- Every new feature/change must be developed on a feature branch named
+  `feature/<short-description-or-issue>` created from `main` — never commit
+  directly to `main`.
+- Every feature branch must get a pull request whose description is genuinely
+  useful to a reviewer — full enough that they don't have to reconstruct
+  context from the diff. Include:
+
+  - **Summary** — what changed in 1-3 bullets describing behavior, not filenames
+  - **Why** — what it addresses/fixes and why; the most important part. Link
+    the issue it closes when one exists
+  - **Approach** — key implementation decisions and alternatives rejected
+    (when non-obvious)
+  - **How to test** — exact steps or commands and the expected result
+  - **Review focus** — point reviewers at risky, subtle, or uncertain parts
+    when relevant
+  - **Screenshots/output** — before/after for UI changes
+  - **Checklist** — tests added/updated, docs updated, migrations/rollback
+    considered, security/permissions reviewed
+
+  Items that don't apply may be dropped rather than left as empty ritual.
 
 When working on this repository:
 1. Create feature branch from main: `feature/short-description`
