@@ -200,3 +200,13 @@ When working on this repository:
 5. Request user testing and confirmation
 6. Create final backup after user confirmation
 7. User handles main merge manually
+
+## Agent Operating Rules
+
+- **Never merge to `main`** — do not merge a PR into `main` without the
+  user's explicit instruction to do so. Open the PR, hand it to the user,
+  and stop.
+- **Diagrams: D2, not mermaid** — for all documentation purposes, write
+  diagrams in [D2](https://d2lang.com) rather than mermaid. `d2` is
+  installed on this machine (`brew install d2`); keep `.d2` sources under
+  `docs/diagrams/` and commit the rendered `.svg` files alongside them.
