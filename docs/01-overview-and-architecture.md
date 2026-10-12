@@ -1,7 +1,7 @@
 # 01 — Overview and Architecture
 
 > **Who this is for:** beginner developers and non-technical readers.
-> **Repository stamp:** base commit `217431f` · branch `feature/update-documentation-2026-10-10` · dated 2026-10-10 · no uncommitted changes when the docs were written.
+> **Repository stamp:** base commit `ba8c7c0` · branch `docs/update-documentation-2026-10-11` · dated 2026-10-11 · no uncommitted changes when the docs were written.
 > Back to [Documentation index](README.md) · Previous version: [archive/2026-10-10_architecture.md](archive/2026-10-10_architecture.md)
 
 ## Contents
@@ -45,7 +45,7 @@ an on-demand Cloud Run Job handles "fetch this now" requests from the site.
 | | Local mode | Cloud mode |
 |---|---|---|
 | **Started by** | `python start.py` or `docker-compose up -d` | GitHub Actions cron (every 30 min) or a Cloud Run Job triggered from the site |
-| **Entry point** | `main.py` (loop) + `web_ui.py` (UI) | `poller.py` (one pass) or `queue_worker.py` (queue only) |
+| **Entry point** | `main.py` (loop) + `web_ui.py` (UI) | `poller.py` (one pass) or `queue_worker.py` (queue only, Cloud Run Job `novels-worker`) |
 | **Storage** | `chapters.db` + `seen_entries.db` (SQLite files) | Firestore, project `mw-novels` |
 | **Runs until** | you stop it | the run's time budget ends |
 | **Selected by** | `DB_TYPE=sqlite` (default) | `DB_TYPE=firestore` |
@@ -80,7 +80,7 @@ Both modes share the same pipeline code — `data/storage.py` and
 ![Pipeline for one RSS entry: catalogue the series, resolve the extnu link with a browser, extract text through trafilatura/readability/browser/override, quality-check, save, then sync the series page.](diagrams/rss-pipeline.svg)
 
 **Walkthrough** — one new feed entry, step by step (code: `main.py`
-`handle_new_entry`, [line 68](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/blob/217431f/main.py#L68)):
+`handle_new_entry`, [line 68](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/blob/ba8c7c0/main.py#L68)):
 
 1. The entry arrives with a title (the series name) and a link. The series is
    saved to `series_info`/`novels` right away so it appears in the library even
@@ -108,7 +108,7 @@ Both modes share the same pipeline code — `data/storage.py` and
 ![Backfill flow: the site writes a novels_requests doc, the poller/worker scrapes the series page into a queue, then works the queue via mirror sites or the NU link, saving to Firestore with progress updates.](diagrams/backfill-queue.svg)
 
 **Walkthrough** — code: `poller.py` `process_request_queue`,
-[line 176](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/blob/217431f/poller.py#L176):
+[line 176](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/blob/ba8c7c0/poller.py#L176):
 
 1. On the site's Novels page, "Fetch missing chapters" asks an
    access-gated Pages Function to write a `novels_requests/{slug}` document.

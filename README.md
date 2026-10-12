@@ -6,7 +6,7 @@ stores it — locally in SQLite, or in Firestore when running as a scheduled
 cloud pipeline feeding the Novels app on morganwilkinson.com.
 
 > **Who this is for:** beginner developers and non-technical readers.
-> **Repository stamp:** base commit `217431f` · branch `feature/update-documentation-2026-10-10` · dated 2026-10-10.
+> **Repository stamp:** base commit `ba8c7c0` · branch `docs/update-documentation-2026-10-11` · dated 2026-10-11.
 > Previous version: [docs/archive/2026-10-10_README-root.md](docs/archive/2026-10-10_README-root.md)
 
 ## How it works

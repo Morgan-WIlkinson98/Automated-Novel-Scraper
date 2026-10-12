@@ -1,7 +1,7 @@
 # References
 
 > **Who this is for:** beginner developers and non-technical readers.
-> **Repository stamp:** base commit `217431f` · branch `feature/update-documentation-2026-10-10` · dated 2026-10-10 · no uncommitted changes when the docs were written.
+> **Repository stamp:** base commit `ba8c7c0` · branch `docs/update-documentation-2026-10-11` · dated 2026-10-11 · no uncommitted changes when the docs were written.
 > Back to [Documentation index](README.md)
 
 Every external link used across this documentation set, grouped. Links marked
@@ -36,7 +36,7 @@ pass.
 - [Firestore REST API](https://firebase.google.com/docs/firestore/reference/rest) —
   the interface `data/firestore_store.py` uses (no SDK).
 - [Cloud Run Jobs](https://cloud.google.com/run/docs/create-jobs) — the
-  `novels-backfill` execution model.
+  `novels-worker` execution model.
 - [GitHub Actions schedules](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#schedule) —
   cron semantics used by `poll.yml`.
 - [xvfb](https://www.x.org/releases/X11R7.7/doc/man/man1/Xvfb.1.xhtml) —
@@ -44,8 +44,13 @@ pass.
 
 ## Repository internals
 
-- [Issue #46 — Refresh repository documentation set](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/46) —
-  tracking issue for this documentation pass.
+- [Issue #57 — Refresh docs/ documentation set (2026-10-11)](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/57) —
+  tracking issue for this documentation pass (previous pass: #46).
+- Pricing pages referenced in [07](07-costs-and-billing.md):
+  [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions),
+  [Cloud Run pricing](https://cloud.google.com/run/pricing),
+  [Firestore pricing](https://cloud.google.com/firestore/pricing) —
+  all official pages, checked 2026-10-11.
 - [PACKAGE-SECURITY.md](PACKAGE-SECURITY.md) — dependency vetting policy.
 - [Archived previous documentation set](archive/) — superseded files with
   archive notes.

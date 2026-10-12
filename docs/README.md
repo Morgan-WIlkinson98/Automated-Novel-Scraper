@@ -1,7 +1,7 @@
 # Novel Scraper — Documentation
 
 > **Who this is for:** beginner developers and non-technical readers.
-> **Repository stamp:** base commit `217431f` · branch `feature/update-documentation-2026-10-10` · dated 2026-10-10 · no uncommitted changes when the docs were written.
+> **Repository stamp:** base commit `ba8c7c0` · branch `docs/update-documentation-2026-10-11` · dated 2026-10-11 · no uncommitted changes when the docs were written.
 
 **What this project is, in two sentences:** Novel Scraper watches a private
 NovelUpdates RSS feed for new chapter releases, follows each release link to

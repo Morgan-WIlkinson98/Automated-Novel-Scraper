@@ -1,7 +1,7 @@
 # Contributing to Novel Scraper
 
 > **Who this is for:** anyone proposing a change to this repository.
-> **Repository stamp:** base commit `217431f` · branch `feature/update-documentation-2026-10-10` · dated 2026-10-10.
+> **Repository stamp:** base commit `ba8c7c0` · branch `docs/update-documentation-2026-10-11` · dated 2026-10-11.
 > Previous version: [docs/archive/2026-10-10_CONTRIBUTING.md](docs/archive/2026-10-10_CONTRIBUTING.md)
 
 This is a personal project, but contributions follow a fixed workflow so the
