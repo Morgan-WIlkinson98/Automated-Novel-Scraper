@@ -30,7 +30,7 @@ Automated-Novel-Scrapper/
 ├── data/                   # storage backends + EPUB export
 ├── auth/                   # cookie/credential helper scripts
 ├── templates/              # Jinja2 HTML for web_ui.py
-├── tools/                  # ops scripts (migration, deploy)
+├── tools/                  # ops scripts (migration, deploy) + vendored NU list exporter
 │
 ├── docs/                   # this documentation set
 ├── requirements.txt        # local/full install
@@ -132,6 +132,7 @@ they currently have.
 |---|---|
 | `tools/import_sqlite.py` | One-way migration: local SQLite → Firestore. Insert-if-absent, safe to re-run. |
 | `tools/deploy_worker.sh` | Builds + deploys the `novels-backfill` Cloud Run Job and wires invoke permissions. |
+| `tools/nu-reading-list-exporter/` | Vendored Chrome extension that exports NU reading lists to the `novelupdates-*.json` files `core/import_nu_export.py` consumes. |
 | `Dockerfile` | Local-mode image: Python + Playwright/Chromium + xvfb + the app. |
 | `docker-compose.yml` | Runs the image with `./data` volume and port 6110 published. |
 | `nginx.conf` | Optional reverse proxy config for the UI. |
