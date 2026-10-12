@@ -8,9 +8,11 @@ at commit `817c19d`. Manifest V3, no build step, no dependencies.
 
 This extension is the upstream producer of the scraper's reading-list import.
 It exports the logged-in user's NovelUpdates reading lists to a
-`novelupdates-<timestamp>.json` file. Drop that file into
-`data/reading_lists/` and `main.py` picks it up at startup via
-[`core/import_nu_export.py`](../../core/import_nu_export.py), which populates
+`novelupdates-<timestamp>.json` file. Move that file into `reading_lists/`
+(repo root — the default `READING_LISTS_DIR`), then run the importer manually:
+`python -m core.import_nu_export` (or `--export <path>`). Nothing imports it
+automatically — `main.py` does not call the importer.
+[`core/import_nu_export.py`](../../core/import_nu_export.py) populates
 `series_info` (current chapter, latest chapter, list name) so the My List page
 knows where you are in each series.
 
@@ -28,4 +30,5 @@ than referenced as an external download.
 1. Log in to novelupdates.com and open any page on `www.novelupdates.com`
    (the forums do not work).
 2. Click the extension icon and confirm the export.
-3. Move the downloaded `novelupdates-*.json` into `data/reading_lists/`.
+3. Move the downloaded `novelupdates-*.json` into the repo's `reading_lists/`
+   directory, then run `python -m core.import_nu_export` to import it.

@@ -1,7 +1,7 @@
 # 05 — Configuration and Services
 
 > **Who this is for:** beginner developers and non-technical readers.
-> **Repository stamp:** base commit `217431f` · branch `feature/update-documentation-2026-10-10` · dated 2026-10-10 · no uncommitted changes when the docs were written.
+> **Repository stamp:** base commit `ba8c7c0` · branch `docs/update-documentation-2026-10-11` · dated 2026-10-11 · no uncommitted changes when the docs were written.
 > Back to [Documentation index](README.md) · Previous version: [archive/2026-10-10_deployment.md](archive/2026-10-10_deployment.md) (deployment sections only)
 
 ## Contents
@@ -49,8 +49,10 @@ your disk from before the package layout — it is not imported by the app; see
 | `MIN_DELAY_SECONDS` | 5 | Per-domain politeness delay — **dead config**: `politeness.py` uses its own hardcoded `5`, ignoring this setting ([#52](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/52)) |
 | `MIN_CHARS` / `MIN_PARAGRAPHS` | 500 / 3 | Extraction quality thresholds — **dead config**: `quality_check` is always called with its own defaults ([#52](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/52)) |
 | `SEEN_ENTRIES_DB` / `CHAPTERS_DB` | `seen_entries.db` / `chapters.db` | SQLite file paths |
-| `READING_LISTS_DIR` | `data/reading_lists` | Where NU JSON exports are picked up |
-| `EXPORT_DIR` | `exports` | Where `.epub` files are written |
+| `READING_LISTS_DIR` | `reading_lists` | Where the NU-list importer looks for `*.json` exports (manual: `python -m core.import_nu_export`) |
+| `EXPORT_DIR` | `EXPORT_DIR_MAC` on macOS/Linux, `EXPORT_DIR_WINDOWS` on Windows | Where `.epub` files and `rss_exports/` are written. **Note:** the macOS/Linux fallback is a hardcoded owner-specific absolute path, not `exports/` — set this explicitly; see [#58](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/58) |
+| `EXPORT_DIR_MAC` / `EXPORT_DIR_WINDOWS` | personal absolute paths | Fallbacks used when `EXPORT_DIR` is unset — see [#58](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/58) |
+| `SHARED_STORAGE_PATH` | — | env-only: when set, RSS feed snapshots, `xml_exports`, and EPUB/rss exports move under `$SHARED_STORAGE_PATH/{rss-feeds,xml-exports,exports/rss_exports}` (used by `rss_watcher.py`, `data/export.py`) |
 | `SERIES_SYNC_INLINE` | off | `1` runs series-page sync in-line instead of a thread (set in `poll.yml`) |
 | `NU_HEADED` | off | `1` forces headed Chromium (set in `poll.yml`; needed on CI) |
 | `POLL_ONLY_SLUG` | — | Workflow-dispatch input: process only this `novels_requests` slug, skip RSS |
@@ -59,7 +61,7 @@ your disk from before the package layout — it is not imported by the app; see
 | `QUEUE_TIME_BUDGET_S` | 1200 | Queue phase budget |
 | `DRAIN_ITEMS_PER_REQUEST` / `DRAIN_TIME_BUDGET_S` | — | Per-request drain slice inside a queue pass |
 | `WORKER_RUN_BUDGET_S` | 3300 | Cloud Run worker budget (< 3600 s job timeout) |
-| `WORKER_MAX_MONTHLY_RUNS` | — | Monthly cap on Cloud Run executions (`claim_worker_run`) |
+| `WORKER_MAX_MONTHLY_RUNS` | 20 | Monthly cap on Cloud Run executions (`claim_worker_run` ledger in `novels_meta/worker_usage`) |
 | `FIRESTORE_PROJECT` | `mw-novels` | Firestore project id |
 | `GOOGLE_CLOUD_PROJECT`, `CLOUD_RUN_REGION`, `CLOUD_RUN_EXECUTION`, `WORKER_RUN_URL` | — | Worker/job metadata; the site links `WORKER_RUN_URL` to watch executions |
 | `DB_HOST` `DB_PORT` `DB_NAME` `DB_USER` `DB_PASSWORD` | — | PostgreSQL path in `database_manager.py` — **incomplete**, see [08](08-known-limitations-and-enhancements.md) |
@@ -74,7 +76,10 @@ your disk from before the package layout — it is not imported by the app; see
 | `core/config.py` | Older duplicate of the above | Gitignored; not imported by the app — see [08](08-known-limitations-and-enhancements.md) |
 | Firestore documents | SA-authenticated data | Public-read rules mean chapter text is world-readable — acceptable for this project, worth knowing |
 
-Never paste real cookie/password values into docs, issues, or PRs.
+Never paste real cookie/password values into docs, issues, or PRs. One
+caveat in the other direction: the Flask `secret_key` in `web_ui.py`
+(line 37) is a hardcoded placeholder, not a real secret — see
+[#59](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/59).
 
 ## External services
 
@@ -85,7 +90,7 @@ Never paste real cookie/password values into docs, issues, or PRs.
 | wuxiaworld.eu, novelfull.net, novellunar.com | Mirror/backfill chapter fetches | None |
 | Firestore (project `mw-novels`) | Cloud storage | SA OAuth token over REST API (`google-auth`) |
 | GitHub Actions | Scheduled polling | Secrets above |
-| Cloud Run (`novels-backfill` job, `us-central1`) | On-demand queue processing | `run.invoker` granted to the site's pages-worker SA |
+| Cloud Run (`novels-worker` job, `us-central1`) | On-demand queue processing | `run.invoker` granted to the site's pages-worker SA |
 | morganwilkinson.com Novels app | Reads Firestore; triggers the worker via `WORKER_RUN_URL` | Cloudflare Access on the site's side |
 
 ## Deployment surfaces
@@ -95,7 +100,7 @@ Never paste real cookie/password values into docs, issues, or PRs.
   proxy). Runs local mode; `./data` volume holds the SQLite files.
 - **GitHub Actions**: `.github/workflows/poll.yml` — every 30 min, Playwright
   container `v1.63.0-noble`, 25-minute timeout.
-- **Cloud Run Job**: `tools/deploy_worker.sh` deploys `novels-backfill`;
+- **Cloud Run Job**: `tools/deploy_worker.sh` deploys `novels-worker`;
   executed on demand from the site, capped by `WORKER_MAX_MONTHLY_RUNS`.
 - **Firebase**: `firebase.json` + `firestore.rules` — deploy rules with the
   Firebase CLI (`firebase deploy --only firestore:rules`).

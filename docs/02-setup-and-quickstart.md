@@ -1,7 +1,7 @@
 # 02 — Setup and Quickstart
 
 > **Who this is for:** beginner developers and non-technical readers.
-> **Repository stamp:** base commit `217431f` · branch `feature/update-documentation-2026-10-10` · dated 2026-10-10 · no uncommitted changes when the docs were written.
+> **Repository stamp:** base commit `ba8c7c0` · branch `docs/update-documentation-2026-10-11` · dated 2026-10-11 · no uncommitted changes when the docs were written.
 > Back to [Documentation index](README.md) · Previous version: [archive/2026-10-10_index.md](archive/2026-10-10_index.md)
 
 ## Contents
@@ -85,28 +85,46 @@ python start.py
 Process IDs land in `pids.json`; Ctrl+C stops both cleanly. To run just one
 piece: `python web_ui.py` (UI only) or `python main.py` (scraper only).
 
-**Expected output** (verified by reading `start.py`/`main.py`; not re-run for
-these docs):
+**Expected output** (verified by reading `start.py`/`main.py`/`rss_watcher.py`;
+not re-run for these docs):
 
 ```
-[START] Launched web_ui.py (pid NNNNN)
-[START] Launched main.py (pid NNNNN)
-[WATCHER] Monitoring ...
-[INIT] Loading XML exports from data/reading_lists ...
-Starting RSS watcher (SQLite storage, check every 900s)
+Starting Novel Scraper
+Starting web UI on http://localhost:6110
+Started web_ui.py (PID: NNNNN)
+Starting scraper
+Started main.py (PID: NNNNN)
+Starting novel scraper
+Database initialized
+Loading XML exports from data/xml_exports
+Starting RSS watcher
 ```
 
 Then open **http://localhost:6110** — you'll see the library dashboard
 (empty until the first poll runs). Chapters land in `chapters.db`, processed
 feed entries in `seen_entries.db`.
 
-**Import your existing reading list (optional):** use the bundled Chrome
-extension in [`tools/nu-reading-list-exporter/`](../tools/nu-reading-list-exporter/)
+**What `main.py` loads at startup:** archived RSS-feed XML snapshots in
+`data/xml_exports/` (files the scraper itself writes on each poll) are
+replayed to rebuild the series catalog. This is a different thing from the
+reading-list import below.
+
+**Import your existing reading list (optional, manual step):** use the
+bundled Chrome extension in
+[`tools/nu-reading-list-exporter/`](../tools/nu-reading-list-exporter/)
 (load unpacked, then click its icon on any novelupdates.com page while logged
-in) to download a `novelupdates-*.json` export. Drop it in
-`data/reading_lists/`, and `main.py` imports it automatically on startup
-(picks the newest file if several exist). The My List page then knows which
-chapter you're currently on.
+in) to download a `novelupdates-*.json` export. Move that file into
+`reading_lists/` (repo root — gitignored; that is the default
+`READING_LISTS_DIR`), then run the importer once:
+
+```bash
+python -m core.import_nu_export                # imports newest *.json in reading_lists/
+python -m core.import_nu_export --export path/to/file.json   # or a specific file
+```
+
+Nothing imports these files automatically — `main.py` does not call the
+importer; run the command after each new export. The My List page then knows
+which chapter you're currently on.
 
 ## Run it with Docker
 
@@ -114,12 +132,22 @@ chapter you're currently on.
 docker-compose up -d --build
 ```
 
-The compose file builds the image, mounts `./data` as a volume (your
-`chapters.db`, `seen_entries.db`, exports, and `reading_lists/` all live
-there), and publishes the UI on **http://localhost:6110**. `config.py` is
-baked into the image at build time — rebuild after changing it, or prefer env
-vars. Logs: `docker-compose logs -f` (also visible in the UI's Logs page,
-which tails the container's `/app/logs` mount).
+The compose file runs two containers: the app (`python start.py`, no
+published port) and an `nginx` proxy that publishes **port 80** and forwards
+to the app. `./data` is mounted into the app container (your `chapters.db`,
+`seen_entries.db`, and exports live there). `config.py` is **excluded from
+the image** by `.dockerignore`, but compose mounts `./config.py` read-only
+into `/app/config.py` when it exists — edit that file (or the commented env
+vars in `environment:`) to configure the container.
+
+**Reaching the UI:** nginx only serves the app for `Host:
+novelscraper.local` (every other Host gets a 404 from the default server in
+`nginx.conf`). Add `127.0.0.1 novelscraper.local` to `/etc/hosts`, then open
+**http://novelscraper.local/** — *not* localhost:6110. See
+[#61](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/61)
+for why this trips up a first run. Logs: `docker-compose logs -f` (also
+visible in the UI's Logs page, which tails the container's `/app/logs`
+mount).
 
 *Not verified by running: the image was not built for these docs.*
 
@@ -149,9 +177,12 @@ to your own project works, but every piece below needs setup:
    `xvfb-run -a python3 poller.py` with `DB_TYPE=firestore` and
    `NU_HEADED=1`.
 5. **On-demand worker (optional)** — `tools/deploy_worker.sh` builds and
-   deploys the `novels-backfill` Cloud Run Job in `us-central1` and gives the
-   site's pages-worker SA `run.invoker`. Requires `gcloud` CLI authenticated
-   as a project owner. *Not verified by running.*
+   deploys the `novels-worker` Cloud Run Job in `us-central1` (2 vCPU / 2 GiB,
+   3600 s timeout, `xvfb-run -a python queue_worker.py`). No `gcloud` CLI
+   needed — the script mints an access token from the service-account JSON
+   and talks to the GCP REST API directly; it does need `docker` (buildx)
+   plus `FIREBASE_SERVICE_ACCOUNT_JSON` in the environment, and the SA needs
+   the roles listed in the script's header comment. *Not verified by running.*
 6. **Migrate existing data (optional)** — `python tools/import_sqlite.py`
    copies local `chapters.db`/`seen_entries.db` into Firestore
    (insert-if-absent, safe to re-run).

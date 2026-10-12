@@ -1,7 +1,7 @@
 # 03 — Project Structure
 
 > **Who this is for:** beginner developers and non-technical readers.
-> **Repository stamp:** base commit `217431f` · branch `feature/update-documentation-2026-10-10` · dated 2026-10-10 · no uncommitted changes when the docs were written.
+> **Repository stamp:** base commit `ba8c7c0` · branch `docs/update-documentation-2026-10-11` · dated 2026-10-11 · no uncommitted changes when the docs were written.
 > Back to [Documentation index](README.md) · Previous version: [archive/2026-10-10_project-guide.md](archive/2026-10-10_project-guide.md)
 
 ## Contents
@@ -33,6 +33,8 @@ Automated-Novel-Scrapper/
 ├── tools/                  # ops scripts (migration, deploy) + vendored NU list exporter
 │
 ├── docs/                   # this documentation set
+├── reading_lists/          # NU reading-list JSON exports (gitignored user data)
+├── chapters.db  seen_entries.db   # local SQLite state (gitignored)
 ├── requirements.txt        # local/full install
 ├── requirements-poller.txt # minimal CI deps (pinned Playwright)
 ├── pyproject.toml          # project metadata + deps (no build backend needed)
@@ -46,9 +48,9 @@ Automated-Novel-Scrapper/
 | File | Role | Started by |
 |---|---|---|
 | `start.py` | Convenience launcher: starts the web UI, waits ~2 s, starts `main.py`; both PIDs go to `pids.json`; Ctrl+C stops both. | you |
-| `main.py` | Local scraper. Initializes storage, imports any NU reading-list export in `data/reading_lists/`, then runs the RSS watcher loop forever. | `start.py` or you |
+| `main.py` | Local scraper. Initializes storage, replays `data/xml_exports/` feed snapshots into the catalog, then runs the RSS watcher loop forever. (Reading-list import is a separate manual CLI: `core/import_nu_export.py`.) | `start.py` or you |
 | `poller.py` | Cloud scraper. One RSS pass + one request-queue pass + run metadata, then exits. Refuses to run unless `DB_TYPE=firestore`. | GitHub Actions |
-| `queue_worker.py` | Queue-only variant of the poller for the Cloud Run Job (`novels-backfill`). Enforces `WORKER_MAX_MONTHLY_RUNS` to cap cost. | Cloud Run trigger |
+| `queue_worker.py` | Queue-only variant of the poller for the Cloud Run Job (`novels-worker`). Enforces `WORKER_MAX_MONTHLY_RUNS` (default 20) to cap cost. | Cloud Run trigger |
 | `web_ui.py` | Flask app on port 6110 — library dashboard, series pages, RSS viewer, EPUB export, logs, settings. | `start.py`, Docker, or you |
 
 ## The pipeline, folder by folder
@@ -87,7 +89,7 @@ Automated-Novel-Scrapper/
 | `settings.py` | Settings resolution: environment variables over `config.py` values over defaults. Single source of truth used by everything. |
 | `config.example.py` | Template for the gitignored `config.py` (no real secrets in the repo). |
 | `database.py`, `database_manager.py` | DB abstraction; `database_manager.py` carries a partial PostgreSQL path — see [08 — Known limitations](08-known-limitations-and-enhancements.md). |
-| `import_nu_export.py` | Parses NovelUpdates reading-list JSON exports into the library. |
+| `import_nu_export.py` | CLI (`python -m core.import_nu_export`) that imports NovelUpdates reading-list JSON exports into `series_info`. Manual step — `main.py` does not run it. |
 | `logging_config.py` | Log format/handlers shared by entry points. |
 | `exceptions.py` | Shared exception types (e.g. politeness/robots violations). |
 | `utils.py` | Small helpers (slugify, text cleaning). |
@@ -121,9 +123,11 @@ they currently have.
 | `chapters.db` | local | SQLite — chapter text + series metadata (gitignored) |
 | `seen_entries.db` | local | SQLite — processed RSS GUIDs (gitignored) |
 | Firestore `mw-novels` | cloud | `novels`, `novels/{slug}/chapters`, `seen_entries`, `runs`, `queue`, `novels_requests` documents |
-| `data/reading_lists/` | local | NU reading-list JSON exports; newest file auto-imported at startup |
-| `EXPORT_DIR` | both | Generated `.epub` files |
-| `pids.json` | local | PIDs written by `start.py` |
+| `reading_lists/` | local | NU reading-list JSON exports (`READING_LISTS_DIR`, default `reading_lists`); imported manually via `python -m core.import_nu_export` (gitignored) |
+| `data/xml_exports/` | local | Archived RSS-feed XML snapshots; replayed by `main.py` at startup to rebuild the series catalog (gitignored) |
+| `rss_feeds/` / `EXPORT_DIR/rss_exports/` | local | Feed snapshots and periodic RSS exports written by `rss_watcher.py` (gitignored) |
+| `EXPORT_DIR` | both | Generated `.epub` files — default is platform-specific, see [05](05-configuration-and-services.md) and [#58](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/58) |
+| `pids.json` / `scraper_pid.json` | local | PIDs written by `start.py` / the UI-launched scraper (gitignored) |
 | `logs/` | Docker | Log files surfaced in the UI Logs page |
 
 ## Tooling and ops
@@ -131,8 +135,8 @@ they currently have.
 | File | Purpose |
 |---|---|
 | `tools/import_sqlite.py` | One-way migration: local SQLite → Firestore. Insert-if-absent, safe to re-run. |
-| `tools/deploy_worker.sh` | Builds + deploys the `novels-backfill` Cloud Run Job and wires invoke permissions. |
-| `tools/nu-reading-list-exporter/` | Vendored Chrome extension that exports NU reading lists to the `novelupdates-*.json` files `core/import_nu_export.py` consumes. |
+| `tools/deploy_worker.sh` | Builds + deploys the `novels-worker` Cloud Run Job (REST API + docker, no gcloud) and wires invoke permissions. |
+| `tools/nu-reading-list-exporter/` | Vendored Chrome extension (upstream snapshot, commit `817c19d`) that exports NU reading lists to `novelupdates-*.json` — the files `core/import_nu_export.py` consumes. |
 | `Dockerfile` | Local-mode image: Python + Playwright/Chromium + xvfb + the app. |
 | `docker-compose.yml` | Runs the image with `./data` volume and port 6110 published. |
 | `nginx.conf` | Optional reverse proxy config for the UI. |

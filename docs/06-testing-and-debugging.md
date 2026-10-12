@@ -1,7 +1,7 @@
 # 06 — Testing and Debugging
 
 > **Who this is for:** beginner developers and non-technical readers.
-> **Repository stamp:** base commit `217431f` · branch `feature/update-documentation-2026-10-10` · dated 2026-10-10 · no uncommitted changes when the docs were written.
+> **Repository stamp:** base commit `ba8c7c0` · branch `docs/update-documentation-2026-10-11` · dated 2026-10-11 · no uncommitted changes when the docs were written.
 > Back to [Documentation index](README.md) · Previous version: [archive/2026-10-10_development.md](archive/2026-10-10_development.md)
 
 ## Contents
@@ -32,7 +32,8 @@ python -c "import main, web_ui, poller, queue_worker"
 python web_ui.py   # then open http://localhost:6110
 ```
 
-All three were verified working at base commit `217431f` on Python 3.12.
+All three were verified working at base commit `ba8c7c0` (Python 3.12;
+`compileall` + `ast.parse` re-verified 2026-10-11).
 
 ## Manual verification paths
 
@@ -58,6 +59,8 @@ All three were verified working at base commit `217431f` on Python 3.12.
 | Poller run exits immediately | `DB_TYPE`/`FIREBASE_SERVICE_ACCOUNT_JSON` unset | Set env vars per [05](05-configuration-and-services.md) |
 | "Failed entries" accumulating | Dead release links | Expected — after 3 retries the entry is dead-queued and a backfill request is auto-created |
 | UI Settings save fails | `config.py` unwritable / permission | Check file permissions; `save_to_file` needs write access to repo root |
-| `/api/test-auth` errors | Possible `urlparse` NameError in `web_ui.py` | Known bug — see [08](08-known-limitations-and-enhancements.md) |
+| Selected-chapter download skips the site-override path | `urlparse` NameError in `web_ui.py` (line ~631, inside the `/api/series/<name>/download` worker) | Known bug [#49](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/49) — the NameError is caught by the broad `except`, so the chapter is skipped rather than crashing the job |
+| `docker-compose up` then `localhost`/`localhost:6110` gives 404/refused | nginx only serves `Host: novelscraper.local`; app has no published port | Add `127.0.0.1 novelscraper.local` to `/etc/hosts`, browse `http://novelscraper.local/` — see [#61](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/61) |
+| EPUB export lands in a strange absolute path (or fails) | `EXPORT_DIR` unset → falls back to a hardcoded personal path on macOS/Linux | Set `EXPORT_DIR` in `config.py`/env — see [#58](https://github.com/Morgan-Wilkinson/Automated-Novel-Scraper/issues/58) |
 | Browser crashes mid-run | Shared Chromium session died | Automatic — session rebuilds up to 3×, then items fall back to standalone resolver |
 | Backfill stalls on huge series | Release-table pagination | Expected — the `scrapePage` cursor resumes on the next run |

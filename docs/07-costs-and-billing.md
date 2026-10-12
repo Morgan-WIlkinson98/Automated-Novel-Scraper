@@ -1,7 +1,7 @@
 # 07 — Costs and Billing
 
 > **Who this is for:** beginner developers and non-technical readers.
-> **Repository stamp:** base commit `217431f` · branch `feature/update-documentation-2026-10-10` · dated 2026-10-10 · no uncommitted changes when the docs were written.
+> **Repository stamp:** base commit `ba8c7c0` · branch `docs/update-documentation-2026-10-11` · dated 2026-10-11 · no uncommitted changes when the docs were written.
 > Back to [Documentation index](README.md)
 
 ## Contents
@@ -17,7 +17,7 @@ This project's cost surface is small but real — three metered services:
 | Service | What runs on it | Billing unit |
 |---|---|---|
 | GitHub Actions | `poll.yml` every 30 min (~48 runs/day) | Minutes — **private repos bill against the account's monthly Actions minutes**; Linux minutes count at the standard rate |
-| Cloud Run | `novels-backfill` job, on-demand only | vCPU/memory-seconds per execution |
+| Cloud Run | `novels-worker` job, on-demand only | vCPU/memory-seconds per execution |
 | Firestore (`mw-novels`) | All cloud data | Reads/writes/storage — project is on the **Blaze** (pay-as-you-go) plan |
 
 Local mode costs nothing beyond your own hardware and bandwidth.
@@ -44,6 +44,17 @@ Cost controls are built into the pipeline, not bolted on:
 *Inferred:* per-run cost is a few cents at most — ~4 billed Actions minutes
 per poll (~1400/month) and seconds of Cloud Run per worker execution — but
 exact numbers depend on account pricing tier and were not measured.
+
+**Published pricing** (official pages, checked 2026-10-11):
+
+- GitHub Actions billing: <https://docs.github.com/en/billing/concepts/product-billing/github-actions>
+  — private-repo minutes draw from the account's included quota, then a
+  per-minute rate.
+- Cloud Run pricing: <https://cloud.google.com/run/pricing> — vCPU-seconds
+  and GiB-seconds; there is a monthly free tier the worker cap is sized
+  against (see `deploy_worker.sh` comments).
+- Firestore pricing: <https://cloud.google.com/firestore/pricing> — per
+  read/write/delete plus stored data; Blaze = pay-as-you-go.
 
 ## Where to check the actual bill
 
