@@ -100,8 +100,10 @@ Then open **http://localhost:6110** — you'll see the library dashboard
 (empty until the first poll runs). Chapters land in `chapters.db`, processed
 feed entries in `seen_entries.db`.
 
-**Import your existing reading list (optional):** on novelupdates.com use
-**Reading List → Export** to get a `readlist_export` JSON file, drop it in
+**Import your existing reading list (optional):** use the bundled Chrome
+extension in [`tools/nu-reading-list-exporter/`](../tools/nu-reading-list-exporter/)
+(load unpacked, then click its icon on any novelupdates.com page while logged
+in) to download a `novelupdates-*.json` export. Drop it in
 `data/reading_lists/`, and `main.py` imports it automatically on startup
 (picks the newest file if several exist). The My List page then knows which
 chapter you're currently on.
