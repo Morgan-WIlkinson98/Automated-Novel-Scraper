@@ -28,6 +28,11 @@ Design-level constraints — things that are intentional or hard to remove:
 - **Politeness fails open.** If `robots.txt` can't be fetched, the layer
   allows the request — deliberate (sites with flaky robots endpoints would
   otherwise block everything) but worth knowing.
+- **Auto-pause needs a human.** Two circuit breakers park work rather
+  than grind it: a request pauses after 5 consecutive same-signature
+  failures, and the service pauses after 3 consecutive failed runs.
+  Neither self-heals — resuming is a deliberate click (re-request the
+  backfill; clear `novels_meta/state.paused` from the site admin).
 - **No test suite.** Verification is manual; see
   [06 — Testing and debugging](06-testing-and-debugging.md).
 - **Firestore public read.** `firestore.rules` allows unauthenticated reads of
