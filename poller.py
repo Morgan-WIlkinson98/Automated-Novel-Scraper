@@ -94,6 +94,10 @@ def main() -> int:
     started = time.time()
     status = "ok"
     run_url = ""
+    # Health ledger — carried on every save_run_meta (the meta PATCH is a
+    # full-document write, so paused/consecutiveFailures must be passed
+    # every time or they'd be wiped).
+    meta_state = {"paused": False, "consecutiveFailures": 0}
     if os.getenv("GITHUB_RUN_ID"):
         run_url = (
             f"{os.getenv('GITHUB_SERVER_URL', 'https://github.com')}/"
@@ -106,12 +110,24 @@ def main() -> int:
             firestore_store.save_run_meta(
                 firestore_store.init_storage(), status="running",
                 processed=stats["processed"], errors=list(stats["errors"]),
-                duration_s=0, run_url=run_url, phase=phase)
+                duration_s=0, run_url=run_url, phase=phase,
+                extra=meta_state)
         except Exception as e:
             logger.warning(f"Meta phase write failed: {e}")
 
     try:
         firestore_store.init_storage()  # validate credentials up front
+        meta_state = {**meta_state,
+                      **{k: firestore_store.get_meta().get(k, meta_state[k])
+                         for k in meta_state}}
+        if meta_state["paused"]:
+            logger.warning("Service is paused — skipping run "
+                           "(resume from the site admin surface)")
+            firestore_store.save_run_meta(
+                firestore_store.init_storage(), status="paused",
+                processed=0, errors=stats["errors"], duration_s=0,
+                run_url=run_url, extra=meta_state)
+            return 0
         conn = init_db()
         # Heartbeat — lets the site show a run in progress. Without this,
         # novels_meta/state only exists after a *completed* run, so
@@ -145,6 +161,19 @@ def main() -> int:
         stats["errors"].append(str(e))
         logger.exception("Poll run failed")
 
+    # Global circuit breaker — a streak of failed runs parks the service.
+    # Paused is sticky (admin clears it); consecutiveFailures isn't.
+    meta_state["consecutiveFailures"] = (
+        0 if status == "ok" else meta_state["consecutiveFailures"] + 1)
+    if (not meta_state["paused"]
+            and meta_state["consecutiveFailures"] >= _PAUSE_AFTER_FAILED_RUNS):
+        meta_state["paused"] = True
+        stats["errors"].append(
+            f"auto-paused: {meta_state['consecutiveFailures']} "
+            "consecutive failed runs")
+        logger.error("Service auto-paused after %d consecutive failed runs",
+                     meta_state["consecutiveFailures"])
+
     try:
         firestore_store.save_run_meta(
             firestore_store.init_storage(),
@@ -153,6 +182,7 @@ def main() -> int:
             errors=stats["errors"],
             duration_s=round(time.time() - started, 1),
             run_url=run_url,
+            extra=meta_state,
         )
     except Exception as e:
         logger.error(f"Failed to write run metadata: {e}")
@@ -171,6 +201,40 @@ _QUEUE_ITEM_CAP = int(os.getenv(
     "QUEUE_ITEMS_PER_REQUEST",
     os.getenv("DRAIN_ITEMS_PER_REQUEST", "40")))
 _QUEUE_FLUSH_S = 60
+
+# Circuit breaker — this many consecutive items failing with the same
+# signature (category + host) means the failure is systemic: a robots
+# wall, a dead host, a layout change — not bad luck. The request pauses
+# (status "paused", queue + attempts preserved) instead of grinding the
+# queue to zero through the drop-after-3 path.
+_PAUSE_STREAK = int(os.getenv("QUEUE_PAUSE_STREAK", "5"))
+# Global breaker: this many consecutive failed runs parks the whole
+# service — meta.paused makes poller.py and queue_worker.py no-op until
+# an admin clears the flag.
+_PAUSE_AFTER_FAILED_RUNS = int(os.getenv("PAUSE_AFTER_FAILED_RUNS", "3"))
+
+
+def _fail_sig(reason: str, url: str) -> str:
+    """Failure signature for the queue circuit breaker — a normalized
+    category plus the target host, so 'same problem on the same site'
+    streaks trip it while unrelated failures don't."""
+    from urllib.parse import urlparse
+    m = (reason or "").lower()
+    if "cloudflare" in m:
+        cat = "cloudflare"
+    elif "fetch html" in m or "robots" in m:
+        cat = "fetch"
+    elif "quality check" in m:
+        cat = "quality"
+    elif "timed out" in m or "timeout" in m:
+        cat = "timeout"
+    else:
+        cat = "error"
+    try:
+        host = urlparse(url or "").netloc or "?"
+    except Exception:
+        host = "?"
+    return f"{cat}:{host}"
 
 
 def process_request_queue(errors: list, max_chapters: int = 40,
@@ -323,6 +387,7 @@ def process_request_queue(errors: list, max_chapters: int = 40,
     fetched = 0
     bail_queue = False
     stormed_reqs = 0  # consecutive requests that CF-bailed their slice
+    paused_reqs = 0   # requests auto-paused by the circuit breaker
     # Mirror-source slug lookups + misses cached for the run so a dead
     # series doesn't re-probe every site on every failed item.
     alt_caches = {}
@@ -474,6 +539,9 @@ def process_request_queue(errors: list, max_chapters: int = 40,
         attempted = 0
         cf_streak = 0
         stormed = False
+        paused = False
+        sig = None          # current consecutive-failure signature
+        sig_streak = 0
         last_flush = time.time()
         activity = "queue processing resumed"
         # Flush immediately so the site's "last worked" reflects this run
@@ -501,6 +569,8 @@ def process_request_queue(errors: list, max_chapters: int = 40,
             num, link = item.get("num"), item.get("extnu")
             label = f"c{num}" if num else (item.get("label") or "chapter")
             succeeded = False
+            fail_reason = ""
+            target = link  # updates to the resolved host URL once known
             try:
                 # Dedup on the NU release link itself — every save stamps
                 # nuLink (RSS pipeline, earlier backfills, wuxiaworld
@@ -548,6 +618,7 @@ def process_request_queue(errors: list, max_chapters: int = 40,
                         succeeded = True
                     else:
                         final_url = resolve(link)
+                        target = final_url
                         doc = firestore_store.get_chapter(
                             series_name, final_url)
                         if doc is not None:
@@ -589,10 +660,12 @@ def process_request_queue(errors: list, max_chapters: int = 40,
                                 activity = f"saved {label}"
                                 succeeded = True
                             else:
+                                fail_reason = result.error or "extraction failed"
                                 activity = f"{label} extraction failed"
                                 errors.append(f"backfill {slug}: extraction failed {link}")
             except Exception as e:
                 cf_blocked = "cloudflare" in str(e).lower()
+                fail_reason = str(e)
                 activity = f"{label} error: {str(e)[:80]}"
                 errors.append(f"backfill {slug}: {e}")
             else:
@@ -603,7 +676,21 @@ def process_request_queue(errors: list, max_chapters: int = 40,
             else:
                 cf_streak = 0
             if failed:
-                if cf_blocked:
+                cur_sig = _fail_sig(fail_reason, target)
+                if cur_sig == sig:
+                    sig_streak += 1
+                else:
+                    sig, sig_streak = cur_sig, 1
+                if sig_streak >= _PAUSE_STREAK:
+                    # Systemic failure — park the request with queue and
+                    # attempts intact; the item requeues unburned. A
+                    # re-request (site button or dead-RSS enqueue) resumes.
+                    paused = True
+                    retry_next.append(item)
+                    activity = (f"auto-paused — {sig_streak} consecutive "
+                                f"{sig} failures")
+                    errors.append(f"backfill {slug}: {activity}")
+                elif cf_blocked:
                     # Transient NU challenge storm — the item isn't
                     # actually bad, so it doesn't burn an attempt.
                     retry_next.append(item)
@@ -615,6 +702,10 @@ def process_request_queue(errors: list, max_chapters: int = 40,
                         activity = f"{label} dropped after 3 failures"
                         processed_links.add(link)
                         errors.append(f"backfill {slug}: dropped {link} after 3 failures")
+            else:
+                sig, sig_streak = None, 0
+            if paused:
+                break
             time.sleep(1.5)  # politeness between fetches
             if only_slug:
                 # Focused runs narrate every item so the Actions log shows
@@ -640,13 +731,26 @@ def process_request_queue(errors: list, max_chapters: int = 40,
                 last_flush = time.time()
 
         queue_out = remaining + retry_next
-        flush(slug, "done" if not queue_out else "processing",
-              queue_out, done, activity, processed_links)
+        if paused:
+            pause_msg = (f"auto-paused: {sig_streak} consecutive "
+                         f"{sig} failures — re-request to resume")
+            firestore_store.update_request(slug, {
+                "status": "paused", "error": pause_msg,
+                "queue": queue_out, "processedCount": done,
+                "totalCount": done + len(queue_out),
+                "lastRunAt": firestore_store._iso_now(),
+                "activity": activity,
+            })
+            paused_reqs += 1
+            logger.warning(f"Backfill {slug}: {pause_msg}")
+        else:
+            flush(slug, "done" if not queue_out else "processing",
+                  queue_out, done, activity, processed_links)
         stormed_reqs = stormed_reqs + 1 if stormed else 0
-        if stormed_reqs >= 2:
+        if stormed_reqs >= 2 or paused_reqs >= 2:
             logger.warning(
-                "Consecutive requests storming Cloudflare — "
-                "pausing queue processing until next run")
+                "Multiple requests bailing in one run — the failure "
+                "looks systemic; pausing queue processing until next run")
             bail_queue = True
         if bail_queue:
             break

@@ -57,6 +57,7 @@ def main() -> int:
     stats = {"processed": 0, "errors": []}
     started = time.time()
     status = "ok"
+    meta = {}
     run_url = os.getenv("WORKER_RUN_URL") or ""
 
     # CLOUD_RUN_* envs are set automatically by the runtime — log the
@@ -80,6 +81,21 @@ def main() -> int:
 
     try:
         firestore_store.init_storage()  # validate credentials up front
+
+        # Service-pause flag — checked before claiming a run slot so a
+        # parked service doesn't burn the monthly execution budget.
+        meta = firestore_store.get_meta()
+        if meta.get("paused"):
+            logger.warning("Service is paused — exiting without claiming "
+                           "a run slot (resume from the site admin surface)")
+            firestore_store.save_run_meta(
+                firestore_store.init_storage(), status="paused",
+                processed=0, errors=stats["errors"], duration_s=0,
+                run_url=run_url, extra={
+                    "paused": True,
+                    "consecutiveFailures":
+                        int(meta.get("consecutiveFailures") or 0)})
+            return 0
 
         # Hard free-tier cap: Blaze bills silently past the free limits,
         # so executions are counted in novels_meta/worker_usage and
@@ -110,6 +126,13 @@ def main() -> int:
             errors=stats["errors"],
             duration_s=round(time.time() - started, 1),
             run_url=run_url,
+            # Preserve the pause ledger — the meta PATCH is a full-doc
+            # write; omitting these fields would silently unpause.
+            extra={
+                "paused": bool(meta.get("paused")),
+                "consecutiveFailures":
+                    int(meta.get("consecutiveFailures") or 0),
+            },
         )
     except Exception as e:
         logger.error(f"Failed to write run metadata: {e}")
