@@ -35,11 +35,25 @@ def _get_robot_parser(domain: str) -> RobotFileParser:
         rp = RobotFileParser()
         rp.set_url(f"https://{domain}/robots.txt")
         try:
-            rp.read()
+            # rp.read() fetches with urllib's default UA, which Cloudflare
+            # fronts answer 403 — and robotparser reads a 403 robots.txt as
+            # disallow_all, blocking the whole domain regardless of the
+            # file's real rules. Fetch with our UA and mirror read()'s
+            # status semantics: parse on success, disallow on 401/403,
+            # allow on other 4xx; 5xx stays fail-closed (unparsed parser).
+            resp = requests.get(
+                rp.url, headers={"User-Agent": USER_AGENT}, timeout=10)
+            if resp.status_code in (401, 403):
+                rp.disallow_all = True
+            elif 400 <= resp.status_code < 500:
+                rp.allow_all = True
+            elif resp.status_code < 400:
+                rp.parse(resp.text.splitlines())
             logger.debug(f"Loaded robots.txt for {domain}")
         except Exception as e:
             logger.warning(f"Failed to fetch robots.txt for {domain}: {e}. Failing open.")
             # Fail open but stay conservative elsewhere
+            rp.allow_all = True
         _robots_cache[domain] = rp
     return _robots_cache[domain]
 

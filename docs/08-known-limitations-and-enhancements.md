@@ -27,7 +27,10 @@ Design-level constraints — things that are intentional or hard to remove:
   `site_overrides.py` entry.
 - **Politeness fails open.** If `robots.txt` can't be fetched, the layer
   allows the request — deliberate (sites with flaky robots endpoints would
-  otherwise block everything) but worth knowing.
+  otherwise block everything) but worth knowing. `robots.txt` is fetched
+  with the scraper's own UA: Cloudflare fronts answer urllib's default
+  `Python-urllib` UA with a 403, which `robotparser` reads as
+  `disallow_all` — a false total block, not the file's rules (#65).
 - **Auto-pause needs a human.** Two circuit breakers park work rather
   than grind it: a request pauses after 5 consecutive same-signature
   failures, and the service pauses after 3 consecutive failed runs.
