@@ -201,6 +201,11 @@ When working on this repository:
 6. Create final backup after user confirmation
 7. User handles main merge manually
 
+After any merge to `main` or change to the pipeline, secrets, or the
+Cloud Run job, run
+[`docs/DEPLOYMENT-CHECKLIST.md`](docs/DEPLOYMENT-CHECKLIST.md) — a green
+merge only proves CI ran; the checklist proves data still flows.
+
 ## Agent Operating Rules
 
 - **Never merge to `main`** — do not merge a PR into `main` without the

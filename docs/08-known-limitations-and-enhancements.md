@@ -31,6 +31,11 @@ Design-level constraints — things that are intentional or hard to remove:
   with the scraper's own UA: Cloudflare fronts answer urllib's default
   `Python-urllib` UA with a 403, which `robotparser` reads as
   `disallow_all` — a false total block, not the file's rules (#65).
+- **Auto-pause needs a human.** Two circuit breakers park work rather
+  than grind it: a request pauses after 5 consecutive same-signature
+  failures, and the service pauses after 3 consecutive failed runs.
+  Neither self-heals — resuming is a deliberate click (re-request the
+  backfill; clear `novels_meta/state.paused` from the site admin).
 - **No test suite.** Verification is manual; see
   [06 — Testing and debugging](06-testing-and-debugging.md).
 - **Firestore public read.** `firestore.rules` allows unauthenticated reads of

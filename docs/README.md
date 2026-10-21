@@ -40,6 +40,9 @@ Also useful:
 - **[References](references.md)** — all external links in one place.
 - **[Package security policy](PACKAGE-SECURITY.md)** — rules for adding or
   upgrading dependencies (still current; kept where it is).
+- **[Deployment checklist](DEPLOYMENT-CHECKLIST.md)** — the verification
+  runbook to run after every merge/deploy so a green merge can't hide a
+  dead pipeline.
 - **[Archive](archive/)** — the previous documentation set, kept for
   comparison. Newer files link back to the version they replaced.
 - **[Diagrams](diagrams/)** — D2 source and rendered SVGs for every diagram.

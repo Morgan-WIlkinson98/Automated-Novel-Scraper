@@ -115,7 +115,16 @@ Both modes share the same pipeline code — `data/storage.py` and
    The poller can also create requests itself when an RSS entry dies for good.
 2. The next `poller.py` run (or an on-demand `queue_worker.py` execution)
    picks up `pending`, `processing`, and retryable-`error` requests,
-   oldest first.
+   oldest first. `paused` requests sit out — the circuit breaker parks a
+   request after `QUEUE_PAUSE_STREAK` (default 5) consecutive failures
+   with the same signature (failure category + host, e.g. `fetch:
+   fenrirealm.com`), since identical failures are systemic, not unlucky.
+   Re-requesting the backfill (site button or a dead-RSS auto-enqueue)
+   flips it back to `pending` with its queue and progress intact.
+   Separately, `PAUSE_AFTER_FAILED_RUNS` (default 3) consecutive failed
+   runs set `novels_meta/state.paused`, which makes both runners
+   short-circuit until an admin clears the flag — the worker checks it
+   before claiming a monthly run slot so a parked service costs nothing.
 3. **Pass 1 — promote:** for each request the shared headed-browser session
    scrapes the NU series page's paginated release table. Big tables pause mid
    way — a `scrapePage` cursor + `pendingChapters` are saved on the request so

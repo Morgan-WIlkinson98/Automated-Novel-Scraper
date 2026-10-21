@@ -739,12 +739,26 @@ def enqueue_backfill(series_name: str, series_url: str, reason: str = "") -> boo
     return True
 
 
-def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: float = 0.0, run_url: str = None, phase: str = ""):
+def get_meta() -> dict:
+    """Read novels_meta/state — the poller's health ledger. Returns {}
+    when the doc doesn't exist yet (fresh project or first run)."""
+    resp = _req("GET", f"{META_COL}/{META_DOC}")
+    if resp.status_code == 404:
+        return {}
+    if not resp.ok:
+        raise DatabaseError(
+            f"Firestore meta read failed {resp.status_code}: {resp.text[:200]}")
+    return {k: _from_field(v) for k, v in resp.json().get("fields", {}).items()}
+
+
+def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: float = 0.0, run_url: str = None, phase: str = "", extra: dict = None):
     """Record the outcome of a poller run for the site dashboard.
     `phase` narrates what the run is doing while status == "running"
-    (setup → polling RSS → processing request queue)."""
+    (setup → polling RSS → processing request queue). The meta PATCH is
+    a full-document write, so `extra` must carry fields that persist
+    across writes (paused, consecutiveFailures) or they'd be wiped."""
     try:
-        resp = _req("PATCH", f"{META_COL}/{META_DOC}", json={"fields": _fields({
+        fields = {
             "lastPollAt": _iso_now(),
             "lastStatus": status,
             "processed": processed,
@@ -752,7 +766,9 @@ def save_run_meta(conn, status: str, processed: int, errors=None, duration_s: fl
             "durationS": duration_s,
             "runUrl": run_url or "",
             "phase": phase or "",
-        })})
+        }
+        fields.update(extra or {})
+        resp = _req("PATCH", f"{META_COL}/{META_DOC}", json={"fields": _fields(fields)})
         if not resp.ok:
             raise DatabaseError(f"Firestore meta write failed {resp.status_code}: {resp.text[:200]}")
         logger.info(f"Saved run meta: {status} ({processed} processed)")
