@@ -10,14 +10,21 @@ owner can review without reconstructing context.
 ## Workflow — the short version
 
 1. **`git fetch --all --prune`**, then branch from latest `main`. Never commit
-   to `main` directly.
+   to `main` or `dev` directly, and never branch from `dev`.
 2. **Open a GitHub issue first** describing the work — every branch maps to
    one. Use the bug-report or feature-request template.
 3. Branch name: `feature/<short-description>` (or `fix/<desc>` for a bug).
 4. Make the change. Keep it small and focused — one feature or fix per branch.
-5. **Open a draft PR to `main`** with `Closes #<issue>` in the body; mark
-   ready only when verified. Link the PR back on the issue.
-6. The owner handles the merge.
+   Add one Pending entry under `changelog/unreleased/` (see `CHANGELOG.md`).
+5. To test, merge the branch into `dev` (the testing branch) without a PR,
+   once the owner approves. `dev` is never merged into `main`.
+6. **Open a draft PR to `main`** with `Closes #<issue>` in the body; mark
+   ready only when verified. Link the PR back on the issue. The changelog
+   entry is compiled on the branch right before the PR. Several features can
+   ship together from a `release/<yyyy-mm-dd>` branch cut from `main`.
+7. The owner handles the merge. Afterwards the shipped branch, then `main`,
+   are merged into `dev` — see the Ship to `main` section of
+   [docs/DEPLOYMENT-CHECKLIST.md](docs/DEPLOYMENT-CHECKLIST.md).
 
 ## Setup
 

@@ -8,6 +8,14 @@ python-app - Python-based novel RSS feed scraper with web UI
 ### Development Workflow
 Follow the global development-workflow skill for all changes.
 
+**Branching**:
+- Feature branches are created from the latest `main`, never from `dev`
+- `dev` is a testing branch: features merge into it without a PR, after
+  the user approves; it is never merged into `main`
+- Every change adds one Pending entry under `changelog/unreleased/`
+- PRs to `main` come from a feature branch, or from `release/<yyyy-mm-dd>`
+  cut from `main` when several features ship together
+
 **PR Requirements**:
 - PR must be in draft state
 - PR must have assignee (repository owner/user)
