@@ -65,8 +65,8 @@ The full documentation set lives in **[docs/](docs/README.md)**:
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: fetch, open an issue,
-branch `feature/<desc>` off `dev`, merge into `dev` (no PR), add a
-changelog entry — `main` changes only through release PRs.
+branch `feature/<desc>` off `main`, add a changelog entry, test on `dev`
+(no PR), draft PR to `main` — never commit to `main` or `dev`.
 
 ## License
 

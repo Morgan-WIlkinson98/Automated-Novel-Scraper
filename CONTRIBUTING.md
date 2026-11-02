@@ -9,18 +9,21 @@ owner can review without reconstructing context.
 
 ## Workflow — the short version
 
-1. **`git fetch --all --prune`**, then branch from latest `dev`. Never commit
-   to `main` directly.
+1. **`git fetch --all --prune`**, then branch from latest `main`. Never commit
+   to `main` or `dev` directly, and never branch from `dev`.
 2. **Open a GitHub issue first** describing the work — every branch maps to
    one. Use the bug-report or feature-request template.
 3. Branch name: `feature/<short-description>` (or `fix/<desc>` for a bug).
 4. Make the change. Keep it small and focused — one feature or fix per branch.
    Add one Pending entry under `changelog/unreleased/` (see `CHANGELOG.md`).
-5. **Merge into `dev` without a PR** once verified and approved by the owner.
-6. Releases: a `release/<yyyy-mm-dd>` branch is cut from `dev`, the changelog
-   is compiled there, and a release PR to `main` — the only PR in the
-   workflow — links every included issue. The owner handles the merge. See
-   the Release section of
+5. To test, merge the branch into `dev` (the testing branch) without a PR,
+   once the owner approves. `dev` is never merged into `main`.
+6. **Open a draft PR to `main`** with `Closes #<issue>` in the body; mark
+   ready only when verified. Link the PR back on the issue. The changelog
+   entry is compiled on the branch right before the PR. Several features can
+   ship together from a `release/<yyyy-mm-dd>` branch cut from `main`.
+7. The owner handles the merge. Afterwards the shipped branch, then `main`,
+   are merged into `dev` — see the Ship to `main` section of
    [docs/DEPLOYMENT-CHECKLIST.md](docs/DEPLOYMENT-CHECKLIST.md).
 
 ## Setup
@@ -46,14 +49,14 @@ Full instructions: [docs/02-setup-and-quickstart.md](docs/02-setup-and-quickstar
   prefer building in-repo first.
 - **Database safety**: back up `chapters.db` before any schema change; deletes
   of user data need explicit approval (see `AGENTS.md` data-safety rules).
-- **Docs in the same branch**: if you change behavior, update the matching file
-  in `docs/` in the same branch — stale docs are a bug.
+- **Docs in the same PR**: if you change behavior, update the matching file in
+  `docs/` in the same PR — stale docs are a bug.
 - **Politeness is a feature**: keep `robots.txt` checks and rate limits intact;
   don't add code that bypasses them.
 
 ## Verifying your change
 
-There is no test suite. Before merging into `dev`:
+There is no test suite. Before marking a PR ready:
 
 ```bash
 python -m compileall . -q                              # syntax
@@ -63,7 +66,7 @@ python web_ui.py                                        # UI boots on :6110
 
 More paths: [docs/06-testing-and-debugging.md](docs/06-testing-and-debugging.md).
 
-## Release PR description must cover
+## PR description must cover
 
 Summary · why (link the issue) · approach and alternatives · how to test
 (numbered steps) · review focus · checklist. The PR template
