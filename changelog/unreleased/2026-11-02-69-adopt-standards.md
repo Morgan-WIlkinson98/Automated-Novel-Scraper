@@ -2,7 +2,7 @@
 
 - **Status:** Pending
 - **Type:** Change
-- **Issue:** _added once the issue is created_
+- **Issue:** [#69](https://github.com/Morgan-WIlkinson98/Automated-Novel-Scraper/issues/69)
 - **Branch:** `feature/adopt-standards`
 
 ## What changed
