@@ -12,6 +12,28 @@ present-but-emptied, cookies can expire, and NU's Cloudflare challenge
 can start bouncing headless runs — each one leaves the site looking fine
 while data stops flowing.
 
+## Release
+
+Changes reach `main` only through a release. `main` is protected by the
+`Morgan-WIlkinson98` org ruleset: a PR is required and only squash or
+rebase merges are allowed — never push to `main` directly.
+
+- [ ] Cut `release/<yyyy-mm-dd>` from an up-to-date `dev`:
+  `git fetch --all --prune && git switch dev && git pull --ff-only && git switch -c release/<yyyy-mm-dd>`
+- [ ] Compile the changelog on the release branch (`changelog` skill,
+  section 6): move each `changelog/unreleased/*.md` entry into
+  `CHANGELOG.md` as Approved, delete the compiled entry files, keep
+  `changelog/unreleased/.gitkeep`
+- [ ] Open the release PR from `release/<yyyy-mm-dd>` to `main` — the
+  only PR in the workflow — with the full PR description, listing every
+  entry with its issue and `Changes` link
+- [ ] The user merges the release PR
+- [ ] After the merge, merge the release branch into `dev`, then `main`
+  into `dev`, and push `dev`:
+  `git fetch --all --prune && git switch dev && git pull --ff-only && git merge --no-ff release/<yyyy-mm-dd> && git merge --no-ff origin/main && git push origin dev`
+- [ ] Run the checks below — the release merge is the deploy (the next
+  scheduled `poll.yml` run picks up the new `main`)
+
 ## 1. Last poller run is green
 
 ```bash
@@ -91,7 +113,7 @@ If `main.py`, `web_ui.py`, `docker-compose.yml`, or Dockerfile changed:
 
 ## 8. Paperwork gates
 
-- [ ] Docs synced in the same PR — `README.md`, `docs/*` match reality
+- [ ] Docs synced in the same branch — `README.md`, `docs/*` match reality
 - [ ] Site docs updated if the contract changed (Firestore schema,
   `novels_requests` fields, endpoints the site calls — those live in
   the morganwilkinson.com repo and must not drift)

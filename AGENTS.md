@@ -31,7 +31,7 @@ repo (morganwilkinson.com), which hosts the hub and Access config.
 ### Documentation sync (required)
 
 Any change to code, config, infrastructure, or deploy behavior MUST
-update the docs in the **same PR** so they always match the real state:
+update the docs in the **same branch** so they always match the real state:
 
 - `README.md` — setup, stack, features
 - `AGENTS.md` — if rules/processes changed
@@ -49,16 +49,19 @@ Secrets live only in GitHub Actions secrets — never in source,
 ### Branch & PR hygiene
 
 - Fetch before branching — `git fetch --all --prune`, then base off the
-  latest `main`; local branches may be stale or already merged
+  latest `dev`; local branches may be stale or already merged
 - Issue first — create a GitHub issue for the work before branching;
   every feature branch maps to an issue
-- Link issues ↔ PRs — after creating an issue or PR, search for its
-  counterpart and link them together (`Closes #N` in the PR body, PR
-  referenced on the issue)
-- Feature branches off `main`; never commit directly to `main`
-- Draft PR first; mark ready only when verified
-- PR body must include: what changed and why, breaking changes or
-  migration notes, numbered how-to-test steps a reviewer can follow,
+- Feature branches off `dev`; never commit directly to `main`
+- Feature branches merge into `dev` without a PR, after the user
+  approves — no draft PRs for features
+- Changelog entry — every change adds one Pending entry under
+  `changelog/unreleased/` (see `CHANGELOG.md`)
+- The only PRs are release PRs from `release/<yyyy-mm-dd>` to `main`
+  (see the Release section of `docs/DEPLOYMENT-CHECKLIST.md`); link
+  each included issue in the release PR body
+- Release PR body must include: what changed and why, breaking changes
+  or migration notes, numbered how-to-test steps a reviewer can follow,
   and testing evidence
 
 ### Data safety — deletes (CRITICAL)
@@ -156,7 +159,7 @@ harmless convenience. The full policy lives in
 
 ## Testing Requirements
 
-Before any PR completion:
+Before merging a feature branch into `dev`:
 - [ ] Python syntax is valid (no f-string errors)
 - [ ] Import structure is correct
 - [ ] Scraper can handle basic RSS feeds
@@ -168,15 +171,20 @@ Before any PR completion:
 ## Development Workflow
 
 - Every new feature/change must be developed on a feature branch named
-  `feature/<short-description-or-issue>` created from `main` — never commit
-  directly to `main`.
-- Every feature branch must get a pull request whose description is genuinely
+  `feature/<short-description-or-issue>` created from the latest `dev` —
+  never commit directly to `main`.
+- Feature branches merge into `dev` directly, without a PR, after the user
+  approves. Every change adds one Pending entry under
+  `changelog/unreleased/`.
+- `dev` reaches `main` only through a `release/<yyyy-mm-dd>` branch cut from
+  `dev`, where the changelog is compiled. The release PR to `main` is the
+  only PR in the workflow, and its description must be genuinely
   useful to a reviewer — full enough that they don't have to reconstruct
   context from the diff. Include:
 
   - **Summary** — what changed in 1-3 bullets describing behavior, not filenames
   - **Why** — what it addresses/fixes and why; the most important part. Link
-    the issue it closes when one exists
+    every issue the release closes
   - **Approach** — key implementation decisions and alternatives rejected
     (when non-obvious)
   - **How to test** — exact steps or commands and the expected result
@@ -190,15 +198,20 @@ Before any PR completion:
 
 When working on this repository:
 1. Fetch the latest branches (`git fetch --all --prune`), create a
-   GitHub issue for the work, then create a feature branch from main:
-   `feature/short-description`
-2. Implement changes following Python best practices
-3. Test thoroughly before creating PR
-4. Create draft PR to main with:
+   GitHub issue for the work, then create a feature branch from the latest
+   `dev`: `feature/short-description`
+2. Implement changes following Python best practices, and add a Pending
+   entry under `changelog/unreleased/`
+3. Test thoroughly before merging into `dev`
+4. Request user testing and confirmation; merge the feature branch into
+   `dev` (no PR) only after the user approves
+5. Create final backup after user confirmation
+6. For a release, follow the Release section of
+   [`docs/DEPLOYMENT-CHECKLIST.md`](docs/DEPLOYMENT-CHECKLIST.md): cut
+   `release/<yyyy-mm-dd>` from `dev`, compile the changelog, and open the
+   release PR to `main` with:
    - Assignee: repository owner/user
    - Reviewer: repository owner/user
-5. Request user testing and confirmation
-6. Create final backup after user confirmation
 7. User handles main merge manually
 
 After any merge to `main` or change to the pipeline, secrets, or the
@@ -208,9 +221,9 @@ merge only proves CI ran; the checklist proves data still flows.
 
 ## Agent Operating Rules
 
-- **Never merge to `main`** — do not merge a PR into `main` without the
-  user's explicit instruction to do so. Open the PR, hand it to the user,
-  and stop.
+- **Never merge to `main`** — do not merge a release PR into `main` without
+  the user's explicit instruction to do so. Open the PR, hand it to the
+  user, and stop.
 - **Diagrams: D2, not mermaid** — for all documentation purposes, write
   diagrams in [D2](https://d2lang.com) rather than mermaid. `d2` is
   installed on this machine (`brew install d2`); keep `.d2` sources under

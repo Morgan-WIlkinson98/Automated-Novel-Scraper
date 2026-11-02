@@ -8,10 +8,16 @@ python-app - Python-based novel RSS feed scraper with web UI
 ### Development Workflow
 Follow the global development-workflow skill for all changes.
 
-**PR Requirements**:
-- PR must be in draft state
+**Branching**:
+- Feature branches are created from the latest `dev` and merge into `dev`
+  without a PR, after the user approves
+- Every change adds one Pending entry under `changelog/unreleased/`
+
+**PR Requirements** (release PRs from `release/<yyyy-mm-dd>` to `main` are
+the only PRs):
 - PR must have assignee (repository owner/user)
 - PR must have reviewer (repository owner/user)
+- PR description follows the PR requirements in `AGENTS.md`
 
 ### Backup Requirements
 - **CRITICAL**: Always backup data directory before any data structure changes
@@ -47,7 +53,7 @@ Follow the global development-workflow skill for all changes.
 - Rate limiting is important for politeness
 
 ### Testing Requirements
-Before any PR completion:
+Before merging a feature branch into `dev`:
 - [ ] Python syntax is valid (no f-string errors)
 - [ ] Import structure is correct
 - [ ] Scraper can handle basic RSS feeds
