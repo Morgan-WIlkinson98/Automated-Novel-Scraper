@@ -12,6 +12,33 @@ present-but-emptied, cookies can expire, and NU's Cloudflare challenge
 can start bouncing headless runs — each one leaves the site looking fine
 while data stops flowing.
 
+## Ship to `main`
+
+`main` is protected by the `Morgan-WIlkinson98` org ruleset: a PR is
+required and only squash or rebase merges are allowed — never push to
+`main` directly, and never merge `dev` into `main`.
+
+- [ ] Choose the branch to ship:
+  - Single feature — the feature branch, updated from `main`:
+    `git fetch --all --prune && git switch feature/<name> && git merge --no-ff origin/main`
+  - Several features — `release/<yyyy-mm-dd>` cut from `main`, with the
+    chosen feature branches merged in:
+    `git fetch --all --prune && git switch -c release/<yyyy-mm-dd> --no-track origin/main && git merge --no-ff feature/<name>`
+- [ ] Compile the changelog on that branch (`changelog` skill,
+  section 6): move each `changelog/unreleased/*.md` entry into
+  `CHANGELOG.md` as Approved, delete the compiled entry files, keep
+  `changelog/unreleased/.gitkeep`
+- [ ] Open the PR to `main` with the full PR description (a release PR
+  lists every entry with its issue), then replace the placeholder PR
+  number in the compiled links in a follow-up commit
+- [ ] The user merges the PR
+- [ ] After the merge, merge the shipped branch into `dev`, then `main`
+  into `dev`, and push `dev` after approval:
+  `git fetch --all --prune && git switch dev && git pull --ff-only && git merge --no-ff <feature/name | release/yyyy-mm-dd> && git merge --no-ff origin/main`
+- [ ] Verify `git diff origin/main dev -- CHANGELOG.md` is empty
+- [ ] Run the checks below — the merge is the deploy (the next
+  scheduled `poll.yml` run picks up the new `main`)
+
 ## 1. Last poller run is green
 
 ```bash

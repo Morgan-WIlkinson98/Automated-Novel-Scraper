@@ -55,7 +55,18 @@ Secrets live only in GitHub Actions secrets — never in source,
 - Link issues ↔ PRs — after creating an issue or PR, search for its
   counterpart and link them together (`Closes #N` in the PR body, PR
   referenced on the issue)
-- Feature branches off `main`; never commit directly to `main`
+- Feature branches off `main` (never off `dev`); never commit directly
+  to `main` or `dev`
+- `dev` is a testing branch only — merge a feature into it without a PR,
+  after the user approves, to test it; `dev` is never merged into
+  `main`, nothing branches from it, and it is never reset unless the
+  user says so
+- Changelog entry — every change adds one Pending entry under
+  `changelog/unreleased/` (see `CHANGELOG.md`)
+- Ship a single feature with a PR from its feature branch to `main`, or
+  several together with a PR from `release/<yyyy-mm-dd>` cut from
+  `main` (see the Ship to `main` section of
+  `docs/DEPLOYMENT-CHECKLIST.md`)
 - Draft PR first; mark ready only when verified
 - PR body must include: what changed and why, breaking changes or
   migration notes, numbered how-to-test steps a reviewer can follow,
@@ -169,7 +180,11 @@ Before any PR completion:
 
 - Every new feature/change must be developed on a feature branch named
   `feature/<short-description-or-issue>` created from `main` — never commit
-  directly to `main`.
+  directly to `main` or `dev`.
+- `dev` is a testing branch: merge a feature branch into it without a PR,
+  after the user approves, to test it. `dev` is never merged into `main`.
+- Every change adds one Pending entry under `changelog/unreleased/`; it is
+  compiled to Approved on the branch being shipped right before its PR.
 - Every feature branch must get a pull request whose description is genuinely
   useful to a reviewer — full enough that they don't have to reconstruct
   context from the diff. Include:
@@ -192,14 +207,22 @@ When working on this repository:
 1. Fetch the latest branches (`git fetch --all --prune`), create a
    GitHub issue for the work, then create a feature branch from main:
    `feature/short-description`
-2. Implement changes following Python best practices
-3. Test thoroughly before creating PR
-4. Create draft PR to main with:
+2. Implement changes following Python best practices, and add a Pending
+   entry under `changelog/unreleased/`
+3. Test thoroughly before creating PR (merge into `dev` to test there,
+   after the user approves)
+4. Compile the changelog entry on the branch being shipped, then create
+   draft PR to main — from the feature branch, or from a
+   `release/<yyyy-mm-dd>` branch cut from `main` when several features
+   ship together — with:
    - Assignee: repository owner/user
    - Reviewer: repository owner/user
 5. Request user testing and confirmation
 6. Create final backup after user confirmation
 7. User handles main merge manually
+8. After the merge, merge the shipped branch into `dev`, then `main` into
+   `dev` (Ship to `main` section of
+   [`docs/DEPLOYMENT-CHECKLIST.md`](docs/DEPLOYMENT-CHECKLIST.md))
 
 After any merge to `main` or change to the pipeline, secrets, or the
 Cloud Run job, run
